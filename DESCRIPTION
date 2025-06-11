@@ -1,0 +1,16 @@
+Package: CorTree
+Type: Package
+Title: An R package
+Version: 1.0
+Date: 2024-06-09
+Author: Your Name
+Maintainer: Your Name <your@email.com>
+Description: More about what it does (maybe more than one line).
+License: GPL (>= 2)
+Encoding: UTF-8
+RoxygenNote: 7.3.2
+Imports: Rcpp (>= 1.0.11)
+LinkingTo: Rcpp, RcppArmadillo
+Suggests: 
+  roxygen2 (>= 7.1.0)
+Roxygen: list(markdown = TRUE)
