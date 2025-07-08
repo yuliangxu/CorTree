@@ -765,11 +765,15 @@ public:
 Rcpp::List CorTree_sampler(arma::mat X, 
                             int n_clus, int tree_depth, int cutoff_layer, 
                             int total_iter, int burnin, int warm_start=0,
-                            arma::uvec init_Z = arma::zeros<arma::uvec>(1),
+                            Rcpp::Nullable<arma::uvec> init_Z_ = R_NilValue,
                             double c_sigma2_vec = 1.0, 
                             double sigma_mu2=1.0,
                             bool all_ind = false,
                             int cov_interval = 1){
+  arma::uvec init_Z = init_Z_.isNull()
+  ? arma::zeros<arma::uvec>(1)
+    : Rcpp::as<arma::uvec>(init_Z_);
+  
   arma::wall_clock timer;
   timer.tic();
   CorTree model;

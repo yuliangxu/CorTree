@@ -9,7 +9,7 @@ Description: More about what it does (maybe more than one line).
 License: GPL (>= 2)
 Encoding: UTF-8
 RoxygenNote: 7.3.2
-Imports: Rcpp (>= 1.0.11)
+Imports: Rcpp (>= 1.0.11), RcppArmadillo
 LinkingTo: Rcpp, RcppArmadillo
 Suggests: 
   roxygen2 (>= 7.1.0)
