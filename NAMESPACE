@@ -1,3 +1,4 @@
 useDynLib(CorTree, .registration = TRUE)
 import(Rcpp)
 export(CorTree_sampler)
+export(construct_tree)

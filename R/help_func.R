@@ -262,6 +262,35 @@ plot_two_mat = function(A,B){
   # Print the plot
   print(p)
 }
+plot_two_mat = function(A,B){
+  # Reshape matrices into data frames for ggplot
+  A_melted <- melt(A)
+  B_melted <- melt(B)
+  
+  # Add labels to distinguish the matrices
+  A_melted$Matrix <- deparse(substitute(A))
+  B_melted$Matrix <- deparse(substitute(B))
+  
+  # Combine both data frames
+  data_combined <- rbind(A_melted, B_melted)
+  
+  # Get the global range for the color scale
+  global_range <- range(data_combined$value)
+  
+  # Create the plot
+  p <- ggplot(data_combined, aes(Var1, Var2, fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
+                         limits = global_range, name = "Value") +
+    facet_wrap(~ Matrix) +
+    scale_y_reverse() +  # Reverse the y-axis to match the matrix row order
+    labs(x = "Column", y = "Row", 
+         title = "Comparison of Symmetric Positive Definite Matrices") +
+    theme_minimal()
+  
+  # Print the plot
+  print(p)
+}
 
 plot_mat = function(A,title = NULL){
   # Reshape matrices into data frames for ggplot

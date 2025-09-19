@@ -1,60 +1,62 @@
----
-title: "CorTree:Vignette"
-author: "Yuliang Xu"
-date: "`r Sys.Date()`"
-output: 
-  github_document:
-    toc: true
-    toc_depth: 3
-vignette: >
-  %\VignetteIndexEntry{Vignette Title}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
----
+CorTree:Vignette
+================
+Yuliang Xu
+2025-09-19
 
-```{r setup, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>"
-)
+- [Installation](#installation)
+- [Reproducible workflow](#reproducible-workflow)
+- [Example](#example)
+  - [Generate simulation data](#generate-simulation-data)
+    - [Competing methods](#competing-methods)
+    - [Run CorTree](#run-cortree)
+    - [Summarize result](#summarize-result)
+    - [(Optional) Visualizations](#optional-visualizations)
 
-```
-
-CorTree is an R package for "A tree-based kernel for densities and its applications in clustering DNase-seq profiles".
+CorTree is an R package for “A tree-based kernel for densities and its
+applications in clustering DNase-seq profiles”.
 
 # Installation
 
-```{r}
+``` r
 devtools::install_github("yuliangxu/CorTree")
+#> Using GitHub PAT from the git credential store.
+#> Skipping install of 'CorTree' from a github remote, the SHA1 (5edfe23e) has not changed since last install.
+#>   Use `force = TRUE` to force installation
 ```
-
 
 # Reproducible workflow
 
-This package contains the implementation of CorTree and Indtree methods. Below is a simulated example to illustrate the usage of the package.
+This package contains the implementation of CorTree and Indtree methods.
+Below is a simulated example to illustrate the usage of the package.
 
-* Simulation 
-  * To reproduce the simulation studies in the paper, simply change the corresponding generative settings in the following example code.
-
-* Real Data Analysis
-  * To reproduce the real data analysis code, please refer to the real data analysis R script in the ./RDA folder.
-  * Please check the Data Availability section in the end of the paper to obtain the analysis data.
-  * ./RDA/REST_K_DNase.R contains the code for preprocessing, clustering, and visualization of the REST data.
-  * ./RDA/NRF1_DNase.R contains the code for preprocessing, clustering, and visualization of the NRF1 data.
+- Simulation
+  - To reproduce the simulation studies in the paper, simply change the
+    corresponding generative settings in the following example code.
+- Real Data Analysis
+  - To reproduce the real data analysis code, please refer to the real
+    data analysis R script in the ./RDA folder.
+  - Please check the Data Availability section in the end of the paper
+    to obtain the analysis data.
+  - ./RDA/REST_K_DNase.R contains the code for preprocessing,
+    clustering, and visualization of the REST data.
+  - ./RDA/NRF1_DNase.R contains the code for preprocessing, clustering,
+    and visualization of the NRF1 data.
 
 # Example
 
-Not all help functions in ./R folder are exported by the CorTree package. To run the simulated example and the reproducible real data analysis code, you may need to download the R files and source them first.
+Not all help functions in ./R folder are exported by the CorTree
+package. To run the simulated example and the reproducible real data
+analysis code, you may need to download the R files and source them
+first.
 
-```{r }
+``` r
 
 # source("./R/help_func.R")
-
 ```
 
 ## Generate simulation data
 
-```{r}
+``` r
 set.seed(2025)
 library(CorTree)
 tree_depth = 6
@@ -91,17 +93,13 @@ for(i in 1:n_clus){
   counts_matrix <- do.call(cbind, counts_list)
   X[which(Z==i),] = t(counts_matrix)
 }
-
-
 ```
-
-
 
 ### Competing methods
 
 Require mclust package to compute the adjusted Rand index.
 
-```{r}
+``` r
 
 n_clus = 3
 # run knn ---------------------------------------------------------------------
@@ -111,21 +109,23 @@ kmeans_result <- kmeans(data_matrix, centers = n_clus, nstart = 25)
 Z_kmeans = kmeans_result$cluster
 
 mclust::adjustedRandIndex(Z_true, Z_kmeans)
+#> [1] 0.3122998
 
 # run PAM ---------------------------------------------------------------
 library(cluster)
+#> Warning: package 'cluster' was built under R version 4.3.3
 pamx <- pam(X, n_clus)
 Z_pam = c(pamx$clustering)
 mclust::adjustedRandIndex(Z_true, Z_pam)
-
+#> [1] 0.06147093
 ```
-
 
 ### Run CorTree
 
-Below is the example code to run CorTree. To run Indtree, simply set all_ind = T in the CorTree_sampler function.
+Below is the example code to run CorTree. To run Indtree, simply set
+all_ind = T in the CorTree_sampler function.
 
-```{r}
+``` r
 # run cor-tree ----------------------------------------------------------
 set_tree_depth = 6
 # removed err_precision to prevent singularity
@@ -151,16 +151,80 @@ cortree <- CorTree::CorTree_sampler(X,
                             sigma_mu2,
                             warm_start = warm_start,
                             all_ind = F) # all=T for Indtree
+#> Data loaded
+#> Hyperparameter set
+#> Gibbs control set
+#> err_precision=1e-15
+#> Tree vectorized
+#> Parameters initialized
+#> MCMC sample initialized
+#> ---update_Sigma::det of Sigma_inv[0]=6.64034e+28
+#> ---update_Sigma::det of Sigma_inv[1]=2.03463e+17
+#> ---update_Sigma::det of Sigma_inv[2]=9.97951e+29
+#> iter: 0 loglike: -2.64374e+06
+#> ---update_pi::pi=   0.0013   0.0016   0.0002   0.9969
+#> 
+#> ---update_Sigma::det of Sigma_inv[3]=1.55476e+14
+#> iter: 5 loglike: -2.64361e+06
+#> ---update_pi::pi=   0.0002   0.1044   0.0005   0.8949
+#> 
+#> ---update_Sigma::det of Sigma_inv[1]=2.60583e+23
+#> ---update_Sigma::det of Sigma_inv[3]=1.06775e+27
+#> iter: 10 loglike: -2.64191e+06
+#> ---update_pi::pi=   0.0007   0.6199   0.0020   0.3774
+#> 
+#> ---update_Sigma::det of Sigma_inv[1]=1.33157e+27
+#> ---update_Sigma::det of Sigma_inv[3]=4.26282e+34
+#> iter: 15 loglike: -2.64154e+06
+#> ---update_pi::pi=   0.0036   0.6140   0.3140   0.0685
+#> 
+#> ---update_Sigma::det of Sigma_inv[0]=1.14197e+78
+#> ---update_Sigma::det of Sigma_inv[1]=5.18068e+29
+#> ---update_Sigma::det of Sigma_inv[2]=1.66046e+37
+#> iter: 20 loglike: -2.64179e+06
+#> ---update_pi::pi=   0.0004   0.6284   0.2364   0.1347
+#> 
+#> ---update_Sigma::det of Sigma_inv[1]=2.356e+32
+#> ---update_Sigma::det of Sigma_inv[2]=2.31839e+63
+#> ---update_Sigma::det of Sigma_inv[3]=1.08671e+41
+#> iter: 25 loglike: -2.6421e+06
+#> ---update_pi::pi=   0.0003   0.6501   0.0004   0.3492
+#> 
+#> ---update_Sigma::det of Sigma_inv[1]=5.99619e+34
+#> ---update_Sigma::det of Sigma_inv[3]=2.87817e+46
+#> iter: 30 loglike: -2.64214e+06
+#> ---update_pi::pi=   0.0010   0.6157   0.0029   0.3804
+#> 
+#> ---update_Sigma::det of Sigma_inv[1]=6.39641e+36
+#> ---update_Sigma::det of Sigma_inv[3]=1.35768e+52
+#> iter: 35 loglike: -2.64248e+06
+#> ---update_pi::pi=   0.0028   0.6391   0.0005   0.3577
+#> 
+#> ---update_Sigma::det of Sigma_inv[1]=5.36496e+38
+#> ---update_Sigma::det of Sigma_inv[3]=4.76888e+57
+#> iter: 40 loglike: -2.64265e+06
+#> ---update_pi::pi=   0.0014   0.6157   0.0027   0.3802
+#> 
+#> ---update_Sigma::det of Sigma_inv[1]=6.48807e+40
+#> ---update_Sigma::det of Sigma_inv[3]=1.57211e+63
+#> iter: 45 loglike: -2.64299e+06
+#> ---update_pi::pi=   0.0025   0.6795   0.0025   0.3155
+#> 
+#> Gibbs sampler finished
 cortree$elapsed
+#> [1] 32.72686
 
 # clustering pattern
 Z_cortree = apply(cortree$mcmc$Z[,-c(total_iter-burnin)],1,mean);table(Z_cortree)
+#> Z_cortree
+#>   1   3 
+#> 364 206
 Z_cortree = round(Z_cortree)
 ```
 
 ### Summarize result
 
-```{r}
+``` r
 
 # summarize results ----------------------------------------------------------
 
@@ -177,12 +241,17 @@ colnames(all_ARI) = colnames(all_Z)[-1]
 out = list(all_Z = all_Z, all_ARI = all_ARI)
 
 knitr::kable(all_ARI, caption = "Adjusted Rand Index for different methods", digits=2)
-
 ```
+
+| K-means |  PAM | Cor-tree |
+|--------:|-----:|---------:|
+|    0.31 | 0.06 |      0.8 |
+
+Adjusted Rand Index for different methods
 
 ### (Optional) Visualizations
 
-```{r}
+``` r
 # visualize the simulated densities
 library(ggplot2)
 n_clus = 2
@@ -223,9 +292,16 @@ ggplot(data, aes(x = value, color = list, group = group)) +
     color = "Group"
   ) +
   theme_minimal()
+#> Warning: Using `size` aesthetic for lines was deprecated in ggplot2 3.4.0.
+#> ℹ Please use `linewidth` instead.
+#> This warning is displayed once every 8 hours.
+#> Call `lifecycle::last_lifecycle_warnings()` to see where this warning was
+#> generated.
 ```
 
-```{r}
+![](README_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
+
+``` r
 # check Sigma in subgroup
 plot_two_mat = function(A,B){
   # Reshape matrices into data frames for ggplot
@@ -261,5 +337,6 @@ display_order = c(1,3)+1
 est_Sigma1 = chol2inv(chol(cortree$mcmc$Sigma_inv[[total_iter-burnin-1]][,,display_order[1]]))
 est_Sigma2 = chol2inv(chol(cortree$mcmc$Sigma_inv[[total_iter-burnin-1]][,,display_order[2]]))
 plot_two_mat(est_Sigma1, est_Sigma2)
-
 ```
+
+![](README_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
