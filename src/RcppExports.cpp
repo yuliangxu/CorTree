@@ -12,8 +12,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // CorTree_sampler
-Rcpp::List CorTree_sampler(arma::mat X, int n_clus, int tree_depth, int cutoff_layer, int total_iter, int burnin, int warm_start, Rcpp::Nullable<arma::uvec> init_Z_, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval);
-RcppExport SEXP _CorTree_CorTree_sampler(SEXP XSEXP, SEXP n_clusSEXP, SEXP tree_depthSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_Z_SEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP) {
+Rcpp::List CorTree_sampler(arma::mat X, int n_clus, int tree_depth, int cutoff_layer, int total_iter, int burnin, int warm_start, Rcpp::Nullable<Rcpp::IntegerVector> init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval);
+RcppExport SEXP _CorTree_CorTree_sampler(SEXP XSEXP, SEXP n_clusSEXP, SEXP tree_depthSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -24,12 +24,12 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type total_iter(total_iterSEXP);
     Rcpp::traits::input_parameter< int >::type burnin(burninSEXP);
     Rcpp::traits::input_parameter< int >::type warm_start(warm_startSEXP);
-    Rcpp::traits::input_parameter< Rcpp::Nullable<arma::uvec> >::type init_Z_(init_Z_SEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerVector> >::type init_Z(init_ZSEXP);
     Rcpp::traits::input_parameter< double >::type c_sigma2_vec(c_sigma2_vecSEXP);
     Rcpp::traits::input_parameter< double >::type sigma_mu2(sigma_mu2SEXP);
     Rcpp::traits::input_parameter< bool >::type all_ind(all_indSEXP);
     Rcpp::traits::input_parameter< int >::type cov_interval(cov_intervalSEXP);
-    rcpp_result_gen = Rcpp::wrap(CorTree_sampler(X, n_clus, tree_depth, cutoff_layer, total_iter, burnin, warm_start, init_Z_, c_sigma2_vec, sigma_mu2, all_ind, cov_interval));
+    rcpp_result_gen = Rcpp::wrap(CorTree_sampler(X, n_clus, tree_depth, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval));
     return rcpp_result_gen;
 END_RCPP
 }

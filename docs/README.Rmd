@@ -25,7 +25,7 @@ CorTree is an R package for \textit{A tree-based kernel for densities and its ap
 # Installation
 
 ```{r eval=FALSE}
-devtools::install_github("yuliangxu/CorTree",force = T)
+devtools::install_github("yuliangxu/CorTree")
 ```
 
 
@@ -90,8 +90,6 @@ for(i in 1:n_clus){
   X[which(Z==i),] = t(counts_matrix)
 }
 
-X_tree = construct_tree(X,tree_depth)
-empirical_phi = X_tree$empirical_phi
 
 ```
 
@@ -136,7 +134,7 @@ cov_interval <- 5
 c_sigma2_vec <- 1  # Hyperparameter for sigma^2 vector. 1/c is the mean
 sigma_mu2 <- 0.1     # Hyperparameter for sigma_mu^2
 # Call the AutoTree_sampler function
-cortree <- CorTree_sampler(X, 
+cortree <- CorTree::CorTree_sampler(X, 
                             init_Z = Z_kmeans-1,
                             n_clus = n_clus+1, 
                             tree_depth, 

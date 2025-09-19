@@ -765,21 +765,20 @@ public:
 Rcpp::List CorTree_sampler(arma::mat X, 
                             int n_clus, int tree_depth, int cutoff_layer, 
                             int total_iter, int burnin, int warm_start=0,
-                            Rcpp::Nullable<arma::uvec> init_Z_ = R_NilValue,
+                            Rcpp::Nullable<Rcpp::IntegerVector> init_Z = R_NilValue,
                             double c_sigma2_vec = 1.0, 
                             double sigma_mu2=1.0,
                             bool all_ind = false,
                             int cov_interval = 1){
-  arma::uvec init_Z = init_Z_.isNull()
-  ? arma::zeros<arma::uvec>(1)
-    : Rcpp::as<arma::uvec>(init_Z_);
-  
   arma::wall_clock timer;
   timer.tic();
   CorTree model;
   
-  if(init_Z.n_elem == 1){
-    init_Z = arma::randi<arma::uvec>(X.n_rows, arma::distr_param(0, n_clus-1));
+  arma::uvec input_Z;
+  if (init_Z.isNull()) {
+    input_Z = arma::zeros<arma::uvec>(1);           // create default here
+  } else {
+    input_Z = as<arma::uvec>(init_Z.get());         // convert provided vector
   }
   
   model.all_ind = all_ind;
@@ -793,7 +792,7 @@ Rcpp::List CorTree_sampler(arma::mat X,
   Rcout << "Gibbs control set" << std::endl;
   model.vectorize_tree(tree_depth, cutoff_layer);
   Rcout << "Tree vectorized" << std::endl;
-  model.initialize_parameters(init_Z);
+  model.initialize_parameters(input_Z);
   Rcout << "Parameters initialized" << std::endl;
   model.initialize_mcmc_sample();
   Rcout << "MCMC sample initialized" << std::endl;
