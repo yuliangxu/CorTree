@@ -20,8 +20,162 @@ knitr::opts_chunk$set(
 
 ```
 
-# installation
+CorTree is an R package for \textit{A tree-based kernel for densities and its applications in clustering DNase-seq profiles}.
+
+# Installation
 
 ```{r eval=FALSE}
 devtools::install_github("yuliangxu/CorTree",force = T)
 ```
+
+
+# Reproducible workflow
+
+This package contains the implementation of CorTree and Indtree methods. Below is a simulated example to illustrate the usage of the package.
+
+* Simulation 
+  * To reproduce the simulation studies in the paper, simply change the corresponding generative settings in the following example code.
+
+* Real Data Analysis
+  * To reproduce the real data analysis code, please refer to the real data analysis R script in the ./RDA folder.
+  * Please check the Data Availability section in the end of the paper to obtain the analysis data.
+  * ./RDA/REST_K_DNase.R contains the code for preprocessing, clustering, and visualization of the REST data.
+  * ./RDA/NRF1_DNase.R contains the code for preprocessing, clustering, and visualization of the NRF1 data.
+
+# Example
+
+Not all help functions in ./R folder are exported by the CorTree package. To run the simulated example and the reproducible real data analysis code, you may need to download the R files and source them first.
+
+```{r }
+
+# source("./R/help_func.R")
+
+```
+
+## Generate simulation data
+
+```{r}
+set.seed(2025)
+library(CorTree)
+tree_depth = 6
+
+n_sample = 570
+n_leaf = 221
+n_clus = 2
+true_params = list()
+true_params$pi = c(0.6,0.4)
+Z = sample(1:n_clus, n_sample, prob = true_params$pi, replace=T)
+Z_true = Z
+X = matrix(0, nrow = n_sample, ncol = n_leaf)
+Z_tab = table(Z)
+
+gen_X = function(n,Z){
+  weight = rbeta(1,10,10)
+  n1 = floor(n*weight)
+  n2 = n - n1
+  switch(Z,
+         c(rbeta(n1, 2, 6), rbeta(n2, 6, 2)),
+         c(rbeta(n1, 1, 1), rbeta(n2, 3, 3)) 
+  )
+}
+
+for(i in 1:n_clus){
+  X_list <- replicate(
+    n = as.numeric(Z_tab[i]),
+    gen_X(sample(100:2156, 1),i)
+  )
+  hist_breaks = seq(0,1,length.out = n_leaf+1)
+  counts_list = lapply(X_list, function(x) hist(x, breaks = hist_breaks, plot = FALSE)$counts)
+  counts_matrix <- do.call(cbind, counts_list)
+  X[which(Z==i),] = t(counts_matrix)
+}
+
+X_tree = construct_tree(X,tree_depth)
+empirical_phi = X_tree$empirical_phi
+
+```
+
+### Competing methods
+
+Require mclust package to compute the adjusted Rand index.
+
+```{r}
+
+n_clus = 3
+# run knn ---------------------------------------------------------------------
+
+data_matrix <- scale(X)
+kmeans_result <- kmeans(data_matrix, centers = n_clus, nstart = 25)
+Z_kmeans = kmeans_result$cluster
+
+mclust::adjustedRandIndex(Z_true, Z_kmeans)
+
+# run PAM ---------------------------------------------------------------
+library(cluster)
+pamx <- pam(X, n_clus)
+Z_pam = c(pamx$clustering)
+mclust::adjustedRandIndex(Z_true, Z_pam)
+
+```
+
+
+### Run CorTree
+
+Below is the example code to run CorTree. To run Indtree, simply set all_ind = T in the CorTree_sampler function.
+
+```{r}
+# run cor-tree ----------------------------------------------------------
+set_tree_depth = 6
+# removed err_precision to prevent singularity
+tree_depth <- set_tree_depth
+cutoff_layer <- 3    # Layer for correlated nodes cutoff
+warm_start <- 0
+burnin <- 20       # Burn-in period
+total_iter <- burnin + 20   # Total iterations
+cov_interval <- 5
+c_sigma2_vec <- 1  # Hyperparameter for sigma^2 vector. 1/c is the mean
+sigma_mu2 <- 0.1     # Hyperparameter for sigma_mu^2
+# Call the AutoTree_sampler function
+cortree <- CorTree_sampler(X, 
+                            init_Z = Z_kmeans-1,
+                            n_clus = n_clus+1, 
+                            tree_depth, 
+                            cutoff_layer, 
+                            total_iter, 
+                            burnin, 
+                            cov_interval = cov_interval,
+                            c_sigma2_vec, 
+                            sigma_mu2,
+                            warm_start = warm_start,
+                            all_ind = F) # all=T for Indtree
+cortree$elapsed
+
+# clustering pattern
+Z_cortree = apply(cortree$mcmc$Z[,-c(total_iter-burnin)],1,mean);table(Z_cortree)
+Z_cortree = round(Z_cortree)
+```
+
+### Summarize result
+
+```{r}
+
+# summarize results ----------------------------------------------------------
+
+all_Z = cbind(Z_true, Z_kmeans, Z_pam, Z_cortree)
+colnames(all_Z) = c("True","K-means","PAM","Cor-tree")
+
+all_ARI = cbind(
+  mclust::adjustedRandIndex(Z_true, Z_kmeans),
+  mclust::adjustedRandIndex(Z_true, Z_pam),
+  mclust::adjustedRandIndex(Z_true, Z_cortree)
+)
+colnames(all_ARI) = colnames(all_Z)[-1]
+
+out = list(all_Z = all_Z, all_ARI = all_ARI)
+
+knitr::kable(all_ARI, caption = "Adjusted Rand Index for different methods", digits=2)
+
+```
+
+
+mclust::adjustedRandIndex(Z_true, Z_cortree)

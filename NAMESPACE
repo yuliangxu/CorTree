@@ -1,2 +1,2 @@
 import(Rcpp)
-useDynLib(AutoTree, .registration=TRUE)
+useDynLib(CorTree, .registration = TRUE)
