@@ -1,0 +1,28 @@
+Package: CorTree
+Type: Package
+Title: Correlated Tree Mixture Modeling for Count Data
+Version: 0.0.0.9000
+Authors@R: c(
+    person(
+      given = "Yuliang",
+      family = "Xu",
+      role = c("aut", "cre"),
+      email = "yuliang@example.com"
+    )
+  )
+Description: Tools for Bayesian correlated tree mixture modeling and
+    simulation helpers for hierarchical count data.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Depends:
+    R (>= 4.1.0)
+Imports:
+    Rcpp
+LinkingTo:
+    Rcpp,
+    RcppArmadillo
+Suggests:
+    devtools
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
