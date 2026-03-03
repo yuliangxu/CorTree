@@ -1,22 +1,190 @@
 #include "PolyaGamma.h" // to sample polya-gamma random variable
 // [[Rcpp::depends(RcppArmadillo)]]
 #include <RcppArmadillo.h>
+#include <queue>
+#include <algorithm>
+#include <functional>
 
 
+//' Aggregate counts along a phylogenetic tree and output node depths
+ //'
+ //' This function takes a count matrix (with rows as samples and columns corresponding to tip taxa)
+ //' along with a phylo tree (an R list with elements "edge", "Nnode", "tip.label") and returns
+ //' a list with two items. The first item, "aggregated", is an aggregated count matrix where each row is a sample,
+ //' the first column holds the counts at the root (i.e. total counts), and subsequent columns hold counts for nodes deeper in the tree.
+ //' The second item, "depth", is an integer vector giving the depth (distance from the root)
+ //' for each node corresponding to the columns of the aggregated matrix.
+ //'
+ //' @param count_data An n x m matrix of counts (n samples, m tips)
+ //' @param tree A list representing a phylo tree (must contain "edge", "Nnode", "tip.label")
+ //' @return A list with two elements: "aggregated" (the aggregated count matrix) and "depth" (the depth for each node).
+ //' @export
+ // [[Rcpp::export]]
+ Rcpp::List aggregate_tree_counts(arma::mat count_data, Rcpp::List tree) {
+  // Extract tree components using Armadillo types.
+  arma::imat edge = Rcpp::as<arma::imat>(tree["edge"]); // two-column matrix: parent, child (1-indexed)
+  int Nnode = Rcpp::as<int>(tree["Nnode"]);
+  Rcpp::CharacterVector tip_label = tree["tip.label"];
+  int n_tips = tip_label.size();
+  int total_nodes = n_tips + Nnode;
+  int n_samples = count_data.n_rows;
+  
+  // Create an aggregated count matrix.
+  // For tip nodes (columns 0 to n_tips-1) we use the original count_data.
+  arma::mat agg(n_samples, total_nodes, arma::fill::zeros);
+  agg.cols(0, n_tips - 1) = count_data;
+  
+  // Build a children list for each node using an Armadillo field.
+  // First, count how many children each node has.
+  arma::Col<int> children_count(total_nodes, arma::fill::zeros);
+  for (arma::uword i = 0; i < edge.n_rows; i++) {
+    int parent = edge(i, 0);
+    children_count(parent - 1)++;  // adjust from 1-indexed to 0-indexed
+  }
+  
+  // Allocate the children field: each entry is a vector of children for that node.
+  arma::field<arma::Col<int>> children(total_nodes);
+  for (int i = 0; i < total_nodes; i++) {
+    children(i) = arma::Col<int>(children_count(i));
+  }
+  
+  // Fill the children field and mark nodes that are children.
+  arma::Col<int> child_index(total_nodes, arma::fill::zeros);
+  arma::Col<int> isChild(total_nodes, arma::fill::zeros); // 0 means not a child, 1 means child
+  
+  for (arma::uword i = 0; i < edge.n_rows; i++) {
+    int parent = edge(i, 0);
+    int child = edge(i, 1);
+    children(parent - 1)(child_index(parent - 1)) = child;
+    child_index(parent - 1)++;
+    isChild(child - 1) = 1;
+  }
+  
+  // Identify the root as the node that is never marked as a child.
+  int root = -1;
+  for (int i = 0; i < total_nodes; i++) {
+    if (isChild(i) == 0) {
+      root = i + 1;  // convert back to 1-indexed
+      break;
+    }
+  }
+  if (root == -1) {
+    Rcpp::stop("Could not find root in the tree.");
+  }
+  
+  // Recursive aggregation function: for internal nodes, add counts from each child.
+  std::function<void(int)> recurse = [&](int node) {
+    if (node <= n_tips) return; // tip node: counts are already set
+    arma::Col<int>& child_list = children(node - 1);
+    for (arma::uword j = 0; j < child_list.n_elem; j++) {
+      int child = child_list(j);
+      recurse(child);
+      agg.col(node - 1) += agg.col(child - 1);
+    }
+  };
+  
+  // Start aggregation from the root.
+  recurse(root);
+  
+  // Compute the depth (distance from the root) for every node using an Armadillo integer vector.
+  arma::ivec depth(total_nodes, arma::fill::value(-1));
+  depth(root - 1) = 0;
+  std::queue<int> q;
+  q.push(root);
+  while (!q.empty()) {
+    int cur = q.front();
+    q.pop();
+    arma::Col<int>& child_list = children(cur - 1);
+    for (arma::uword j = 0; j < child_list.n_elem; j++) {
+      int child = child_list(j);
+      depth(child - 1) = depth(cur - 1) + 1;
+      q.push(child);
+    }
+  }
+  
+  // Create a vector of node indices (1-indexed) and sort them by their depth.
+  std::vector<int> nodes(total_nodes);
+  for (int i = 0; i < total_nodes; i++) {
+    nodes[i] = i + 1;
+  }
+  std::sort(nodes.begin(), nodes.end(), [&](int a, int b) {
+    if (depth(a - 1) == depth(b - 1))
+      return a < b;
+    return depth(a - 1) < depth(b - 1);
+  });
+  
+  // Build the output matrix with columns arranged by increasing depth.
+  arma::mat result(n_samples, total_nodes);
+  arma::ivec sorted_depth(total_nodes);
+  for (int j = 0; j < total_nodes; j++) {
+    int node = nodes[j];
+    result.col(j) = agg.col(node - 1);
+    sorted_depth(j) = depth(node - 1);
+  }
+  
+  // Generate the parent_nodes vector:
+  // Iterate over the sorted nodes and keep only those with at least one child.
+  std::vector<int> parent_nodes;
+  for (int j = 0; j < total_nodes; j++) {
+    int node = nodes[j];
+    if (children_count(node - 1) > 0) {  // node has children → it is a parent node
+      parent_nodes.push_back(node);
+    }
+  }
+  
+  return Rcpp::List::create(Rcpp::Named("aggregated") = result,
+                            Rcpp::Named("nodes") = nodes,
+                            Rcpp::Named("parent_nodes") = parent_nodes,
+                            Rcpp::Named("depth") = sorted_depth);
+}
 
-class CorTree{
+// [[Rcpp::export]]
+arma::uvec isIn(const arma::uvec& a, const arma::uvec& b) {
+  arma::uvec result(a.n_elem, arma::fill::zeros);
+  for (arma::uword i = 0; i < a.n_elem; i++) {
+    // Check membership: if a(i) is in b, then set result(i) to 1.
+    if (arma::any(b == a(i))) {
+      result(i) = 1;
+    }
+  }
+  return result;
+}
+
+// [[Rcpp::export]]
+arma::uvec complementarySet(const arma::uvec& a, const arma::uvec& b) {
+  // We use a std::vector to collect the complementary elements
+  std::vector<arma::uword> comp;
+  
+  // Loop over each element in b.
+  for (arma::uword i = 0; i < b.n_elem; i++) {
+    // If b[i] is not found in a, then include it.
+    if (!arma::any(a == b[i])) {
+      comp.push_back(b[i]);
+    }
+  }
+  
+  // Convert the std::vector to an arma::uvec and return.
+  return arma::uvec(comp);
+}
+
+class PhyloTree{
 private: 
   struct Data{
     arma::mat X; // n by (n_species) matrix, count table, sparse matrix
+    
     int n_clus; // number of latent clusters 
     int n; // number of observations n
   } dat;
   
-  struct FlatTree{
+  struct Tree{
     int m; // tree depth. layer m=0 is the sample space Omega
     
     int cutoff_layer; // cutoff layer for correlated nodes, 0,...,m
     int L; // cutoff for the number of correlated nodes in a tree, any number in {2^{cutoff_layer+1}-1, i=0,1,...,m}
+    arma::uvec parent_nodes; // parent nodes, sorted by depth
+    arma::uvec nodes; // all nodes, sorted by depth
+    arma::umat edge; // edge matrix, parent, child
+
     arma::uvec idx_cor; // length of L
     arma::uvec idx_ind; // length of (total_parents-L)
     // for mu, fixed mu for the last layer
@@ -27,8 +195,6 @@ private:
     int total_parents; // total number of parents, = 2^m-1, also the total number of phi
     arma::mat count; // X_i(A_eps), n by total_nodes matrix, count table 
     arma::mat kappa; // n(A) - n(A_p)/2, n by total_parents matrix
-    arma::uvec interval_left; // total_nodes vector, [l,r) for the interval of split on the node
-    arma::uvec interval_right; // total_nodes vector, [l,r) for the interval of split on the node
 
     arma::vec ind_layer_idx;
   } tree; // fixed tree structure
@@ -37,12 +203,11 @@ private:
     arma::mat mu; //  total_parents x n_clus, node probability
     arma::cube Sigma_inv; // L by L x n_clus precision matrix
     arma::mat sigma2_vec; // length of (total_parents-L) by n_clus matrix, diagonal elements of independent nodes. fixed
-    arma::mat inv_a_vec;// for half-cauchy update
     arma::mat omega; // n by total_parents matrix, polya gamma latent variable
     
     // Dirichlet process  mixure parameters
     arma::uvec Z; // n by 1, membership indicator {1,2,...,n_clus}
-    arma::uvec Z_cor_status; // n_clus by 1, whether to have Cov (1) or Independent (0)
+    arma::uvec Z_cor_status; // n by 1, membership indicator {1,2,...,n_clus}
     double alpha; // scalar, concentration parameter
     arma::vec pi; // n_clus by 1, mixture proportion
     arma::mat phi; // logit probability, n by total_parents matrix
@@ -90,7 +255,6 @@ private:
     arma::cube mu_sample;
     arma::cube phi_sample;
     arma::mat pi_sample;
-    arma::cube sigma2_vec_sample;
     arma::umat Z_sample; 
     Rcpp::List Sigma_inv_sample;
     arma::vec loglik;
@@ -102,34 +266,13 @@ public:
   
   int iter=0;
   std::vector<GHS_params> ghs_list;
-  std::vector<arma::uvec> ghs_ind_all;
   Rcpp::List test_output;
   bool all_ind = false;
-  bool save_phi_trace = true;
-  bool save_cluster_cor_trace = true;
   int warm_start = 0;
   int cov_interval = 1;
-  int clustering_freq = 1;
 
-  arma::uword find_parent(arma::uword node){
-    return floor((node-1)/2);
-  };
   
-  arma::uvec find_parent(arma::uvec node){
-    return arma::floor((node-1)/2);
-  };
   
-  arma::uword find_left_child(arma::uword node){
-    return 2*node+1;
-  };
-  
-  arma::uvec find_left_child(arma::uvec node){
-    return 2*node+1;
-  };
-  
-  arma::uword find_right_child(arma::uword node){
-    return 2*node+2;
-  };
   
   void load_data(arma::mat X, int n_clus){
     dat.X = X;
@@ -149,159 +292,121 @@ public:
     gibbs_control.mcmc_sample = total_iter - burnin;
   };
 
-  void initialize_ghs_indices(int p){
-    ghs_ind_all.clear();
-    if(p <= 0){
-      return;
-    }
-    ghs_ind_all.resize(static_cast<std::size_t>(p));
-    for(int i = 0; i < p; ++i){
-      arma::uvec ind = arma::regspace<arma::uvec>(0, p - 1);
-      ind.shed_row(static_cast<arma::uword>(i));
-      ghs_ind_all[static_cast<std::size_t>(i)] = std::move(ind);
-    }
-  }
-
   void initialize_mcmc_sample(){
     paras_sample.mu_sample = arma::zeros<arma::cube>(tree.total_parents, dat.n_clus, gibbs_control.mcmc_sample);
-    if(save_phi_trace){
-      paras_sample.phi_sample = arma::zeros<arma::cube>(dat.n, tree.total_parents, gibbs_control.mcmc_sample);
-    }
+    paras_sample.phi_sample = arma::zeros<arma::cube>(dat.n, tree.total_parents, gibbs_control.mcmc_sample);
     if(!all_ind){
       paras_sample.Sigma_inv_sample = Rcpp::List(gibbs_control.mcmc_sample);
     }
-    // Save full pi trajectory by default (including burn-in iterations).
-    paras_sample.pi_sample = arma::zeros<arma::mat>(dat.n_clus, gibbs_control.total_iter);
+    paras_sample.pi_sample = arma::zeros<arma::mat>(dat.n_clus, gibbs_control.mcmc_sample);
     paras_sample.loglik = arma::zeros<arma::vec>(gibbs_control.total_iter);
     paras_sample.Z_sample = arma::zeros<arma::umat>(dat.n, gibbs_control.mcmc_sample);
     
-    if(save_cluster_cor_trace){
-      paras_sample.cluster_cor = arma::zeros<arma::ucube>(dat.n, dat.n, gibbs_control.mcmc_sample);
-    }
+    paras_sample.cluster_cor = arma::zeros<arma::ucube>(dat.n, dat.n, gibbs_control.mcmc_sample);
     paras_sample.tausq_GHS = arma::zeros<arma::mat>(dat.n_clus, gibbs_control.mcmc_sample);
   };
   
   
-  void vectorize_tree(arma::uword tree_depth, arma::uword cutoff_layer){
-    // set tree structure
-    tree.m = tree_depth;
-    tree.total_nodes = pow(2, tree.m+1) - 1;
-    tree.total_parents = pow(2, tree.m) - 1;
+  void vectorize_tree(arma::mat count_data, Rcpp::List phylo_tree, arma::uword cutoff_layer){
+    Rcpp::List aggregate_tree = aggregate_tree_counts(count_data, phylo_tree);
+    arma::vec node_depth = aggregate_tree["depth"];
     
-    tree.cutoff_layer = cutoff_layer;
+    int Nnode = Rcpp::as<int>(phylo_tree["Nnode"]);
+    arma::uvec parent_nodes = aggregate_tree["parent_nodes"];
+    arma::umat edge = phylo_tree["edge"];
+    tree.edge = edge;
+    
+    // set tree structure
+    tree.m = max(node_depth);
+    tree.total_nodes = node_depth.size();
+    tree.total_parents = Nnode;
+    tree.parent_nodes = parent_nodes;
+    arma::uvec all_nodes = aggregate_tree["nodes"];
+    tree.nodes = all_nodes;
+    
+    if(cutoff_layer > tree.m){
+      Rcpp::stop("cutoff_layer should be less than the tree depth");
+    }else{
+      tree.cutoff_layer = cutoff_layer;
+    }
+    
+    arma::vec parent_depth(tree.total_parents, arma::fill::zeros);
+    for(arma::uword j = 0; j < tree.total_parents; j++){
+      arma::uvec node_pos = arma::find(tree.nodes == tree.parent_nodes(j), 1, "first");
+      if(node_pos.n_elem == 0){
+        Rcpp::stop("Parent node not found in sorted node list.");
+      }
+      parent_depth(j) = node_depth(node_pos(0));
+    }
+
     if(all_ind){
       tree.L = 0;
       tree.idx_ind = arma::regspace<arma::uvec>(0, tree.total_parents-1);
     }else{
-      tree.L = pow(2, tree.cutoff_layer+1) - 1;
-      tree.idx_cor = arma::regspace<arma::uvec>(0, tree.L-1);
-      tree.idx_ind = arma::regspace<arma::uvec>(tree.L, tree.total_parents-1);
-      initialize_ghs_indices(tree.L);
+      // correlated parent indices use parent-parameter indexing (0..total_parents-1)
+      tree.idx_cor = arma::find(parent_depth <= static_cast<double>(cutoff_layer));
+      tree.L = tree.idx_cor.n_elem;
+      tree.idx_ind = complementarySet(tree.idx_cor, arma::regspace<arma::uvec>(0, tree.total_parents-1));
     }
     
 
     // ser precision for Sigma_inv
-    hyper.err_precision = pow(10.0, -15.0);
-    Rcout<<"err_precision="<<hyper.err_precision<<std::endl;
+    hyper.err_precision = (tree.L > 0) ? pow(10.0, -11.0/sqrt(static_cast<double>(tree.L))) : 1e-11;
+    Rcpp::Rcout<<"err_precision="<<hyper.err_precision<<std::endl;
     
-    // initialize the tree
-    tree.count = arma::zeros<arma::mat>(dat.X.n_rows, tree.total_nodes);
-    tree.kappa = arma::zeros<arma::mat>(dat.X.n_rows, tree.total_parents);
-    // Old wrong code (fragile in this environment): this uvec init path has
-    // caused runtime layout/init failures for some builds.
-    // tree.interval_left = arma::zeros<arma::uvec>(tree.total_nodes);
-    // tree.interval_right = arma::zeros<arma::uvec>(tree.total_nodes);
-    tree.interval_left.set_size(static_cast<arma::uword>(tree.total_nodes));
-    tree.interval_left.zeros();
-    tree.interval_right.set_size(static_cast<arma::uword>(tree.total_nodes));
-    tree.interval_right.zeros();
+    arma::mat aggregated = aggregate_tree["aggregated"];
+    tree.count = aggregated;
+
+    // initialize kappa as n(A) - n(A_p)/2, columns are ordered the same way as the nodes
+    tree.kappa = arma::zeros<arma::mat>(dat.n, tree.total_parents);
+    arma::uvec all_children = tree.edge.col(1);
+    for(arma::uword j=0; j<tree.total_parents; j++){
+      arma::uvec col_parent = find(tree.nodes == tree.parent_nodes(j));
+      arma::uvec children = all_children(find(tree.edge.col(0) == tree.parent_nodes(j)));
+      arma::uvec col_1st_child = find(tree.nodes == children(0));
+      tree.kappa.col(j) = tree.count.col(col_1st_child(0)) - tree.count.col(col_parent(0))/2;
+    }
+
+    // change this to be phylo-tree's layer
+    tree.ind_layer_idx = parent_depth.elem(tree.idx_ind);
     
-    // fill in the tree by the count matrix
-    int k = dat.X.n_cols;
-    tree.count.col(0) = arma::sum(dat.X, 1);
-    tree.interval_left(0) = 0; // [left, right) left closed, right open
-    tree.interval_right(0) = k;
-
-    for(int i=0; i<tree.total_parents; i++){
-      
-      arma::uword left_node = find_left_child(i);
-      tree.interval_left(left_node) = tree.interval_left(i);
-      tree.interval_right(left_node) = (tree.interval_left(i) + tree.interval_right(i))/2;
-      
-      arma::uword right_node = find_right_child(i);
-      tree.interval_left(right_node) = tree.interval_right(left_node);
-      tree.interval_right(right_node) = tree.interval_right(i);
-      
-      // correct
-      arma::uvec left_idx, right_idx;
-      // Old wrong code: can underflow with unsigned arithmetic when right bound is 0.
-      // if(tree.interval_left(i) <= tree.interval_right(left_node)-1){
-      if(tree.interval_left(i) < tree.interval_right(left_node)){
-        left_idx = arma::regspace<arma::uvec>(tree.interval_left(i), tree.interval_right(left_node)-1);
-        tree.count.col(left_node) = arma::sum(dat.X.cols(left_idx), 1);
-      }else{
-        tree.count.col(left_node) = arma::zeros<arma::vec>(dat.X.n_rows);
-      }
-      
-      
-      // Old wrong code: can underflow with unsigned arithmetic when right bound is 0.
-      // if(tree.interval_left(right_node) <= tree.interval_right(i)-1){
-      if(tree.interval_left(right_node) < tree.interval_right(i)){
-        right_idx = arma::regspace<arma::uvec>(tree.interval_left(right_node), tree.interval_right(i)-1);
-        tree.count.col(right_node) = arma::sum(dat.X.cols(right_idx), 1);
-      }else{
-        tree.count.col(right_node) = arma::zeros<arma::vec>(dat.X.n_rows);
-      }
-      
-      //wrong: did not consider overflow of nodes
-      // arma::uvec left_idx = arma::regspace<arma::uvec>(tree.interval_left(i), tree.interval_right(left_node)-1);
-      // arma::uvec right_idx = arma::regspace<arma::uvec>(tree.interval_left(right_node), tree.interval_right(i)-1);
-      
-      // tree.count.col(left_node) = arma::sum(dat.X.cols(left_idx), 1);
-      // tree.count.col(right_node) = arma::sum(dat.X.cols(right_idx), 1);
-      
-      // get kappa
-      tree.kappa.col(i) = tree.count.col(left_node) - tree.count.col(i)/2;
-
-    }
-    if(!all_ind){
-      tree.ind_layer_idx = floor( log2(arma::regspace<arma::vec>(tree.L, tree.total_parents - 1)) );
-    }else{
-      tree.ind_layer_idx = floor( log2(2+arma::regspace<arma::vec>(0, tree.total_parents - 1)) );
-    }
 
   }; 
 
   void set_test_output(){
     test_output = Rcpp::List::create(Rcpp::Named("count") = tree.count,
+                                     Rcpp::Named("depth") = tree.m,
+                                     Rcpp::Named("tree.idx_ind") = tree.idx_ind,
+                                     Rcpp::Named("tree.idx_cor") = tree.idx_cor,
+                                     Rcpp::Named("ind_layer_idx") = tree.ind_layer_idx,
                                      Rcpp::Named("sigma_vec") = paras.sigma2_vec,
-                                     Rcpp::Named("kappa") = tree.kappa,
-                                     Rcpp::Named("interval_left") = tree.interval_left,
-                                     Rcpp::Named("interval_right") = tree.interval_right);
+                                     Rcpp::Named("kappa") = tree.kappa);
   }
   
+
+  // arma::uword node_to_column(arma::uword node){
+  //   arma::uvec indices = arma::find(tree.nodes == node);
+  //   return indices(0);
+  // };
   
+  // arma::uword column_to_node(arma::uword column){
+  //   return tree.nodes(column);
+  // };
+
   void initialize_parameters(arma::uvec init_Z){
     paras.mu = arma::zeros<arma::mat>(tree.total_parents, dat.n_clus);
-    paras.Z_cor_status = arma::ones<arma::uvec>(dat.n_clus); // whether to have Cov or Independent
+    paras.Z_cor_status = arma::ones<arma::uvec>(dat.n);
     // Assuming tree.L is the dimension of the identity matrix and tree.total_slices is the number of slices
 
     if(all_ind){
       paras.sigma2_vec = arma::ones<arma::mat>(tree.total_parents, dat.n_clus);
-      paras.inv_a_vec = arma::ones<arma::mat>(tree.total_parents, dat.n_clus);
-      paras_sample.sigma2_vec_sample = arma::zeros<arma::cube>(tree.total_parents, dat.n_clus, gibbs_control.mcmc_sample);
     }else{
       paras.Sigma_inv = arma::cube(tree.L, tree.L, dat.n_clus, arma::fill::zeros);
       for (size_t i = 0; i < dat.n_clus; i++) {
           paras.Sigma_inv.slice(i) = arma::eye<arma::mat>(tree.L, tree.L);
       }
       paras.sigma2_vec = arma::ones<arma::mat>(tree.total_parents - tree.L, dat.n_clus);
-      paras.inv_a_vec = arma::ones<arma::mat>(tree.total_parents - tree.L, dat.n_clus);
-      paras_sample.sigma2_vec_sample = arma::zeros<arma::cube>(tree.total_parents - tree.L, dat.n_clus, gibbs_control.mcmc_sample);
     }
-    
-
-    
 
     
     paras.omega = arma::zeros<arma::mat>(dat.X.n_rows, tree.total_parents);
@@ -354,6 +459,7 @@ public:
       // Update the diagonal of paras.Sigma_inv.slice(k) directly, without creating a full diagonal matrix
       if(!all_ind){
         arma::mat post_Sigma_inv = paras.Sigma_inv.slice(k);
+        arma::mat temp;
         post_Sigma_inv.diag() += omega_i.elem(tree.idx_cor);  // In-place addition to the diagonal
 
 
@@ -422,13 +528,32 @@ public:
                    GHS_params& params) {
     int p = S.n_rows;
 
-    if(static_cast<int>(ghs_ind_all.size()) != p){
-      initialize_ghs_indices(p);
+    // arma::mat cholDecomp;
+    // bool pd_check = arma::chol(cholDecomp, params.Omega);
+    arma::mat Omega_old = params.Omega;
+    // bool S_pd_check = arma::chol(cholDecomp, S);
+    // Rcout<<"begin of GHS_oneSample"<<std::endl;
+    // Rcout<<"is S pd?"<<S_pd_check<<std::endl;
+    // Rcout<<"is Omega pd?"<<pd_check<<std::endl;
+
+    // Indices for columns
+  arma::mat ind_all(p - 1, p, arma::fill::zeros);
+  for (int i = 0; i < p; ++i) {
+    if (i == 0) {
+      ind_all.col(i) = arma::regspace(1, p - 1);
+    } else if (i == p - 1) {
+      ind_all.col(i) = arma::regspace(0, p - 2);
+    } else {
+      arma::uvec inds = arma::regspace<arma::uvec>(0, p - 1);
+      inds.shed_row(i);
+      ind_all.col(i) = arma::conv_to<arma::vec>::from(inds);
     }
+  }
+  
     
     // Sample Sigma and Omega = inv(Sigma)
     for (arma::uword i = 0; i < p; ++i) {
-      const arma::uvec& ind = ghs_ind_all[static_cast<std::size_t>(i)];
+      arma::uvec ind = arma::conv_to<arma::uvec>::from(ind_all.col(i));
       
       // Extract submatrices using proper matrix subsetting
       arma::mat Sigma_11 = params.Sigma(ind, ind);             // Sigma_11
@@ -497,76 +622,47 @@ public:
 
   
   void update_Sigma(){
-    const double log_det_max_update = std::log(1e200);
-    const double log_det_regularize = std::log(1e150);
     // consider a warm start using independent state
     for(arma::uword k=0; k<dat.n_clus; k++){
       arma::uvec idx_k = arma::find(paras.Z == k);
       if(idx_k.n_elem > 0){
         if(!all_ind){
           if(iter < warm_start || paras.Z_cor_status(k) == 0){
-            Rcout<<"---update_Sigma::warm start for "<<k<<"-th cluster, Z_cor_status="<<paras.Z_cor_status(k)<<std::endl;
-
-            // // update sigma_vec
+            
+            // update sigma_vec
             arma::vec layer_idx = floor( log2(2+arma::regspace<arma::vec>(0, tree.L - 1)) );
-            // arma::vec a_vec = layer_idx* hyper.c_sigma2_vec + idx_k.n_elem/2;
-            // arma::mat phi_res = paras.phi(idx_k,tree.idx_cor);
-            // phi_res.each_row() -= paras.mu(tree.idx_cor, arma::uvec{k}).t();
-            // arma::vec b_vec = layer_idx + arma::trans(arma::sum(phi_res%phi_res, 0)/2);  
-
-            // // wrong
-            // arma::vec gamma1(a_vec.n_elem);
-            // arma::vec gamma2(b_vec.n_elem);
-            // for (arma::uword i = 0; i < a_vec.n_elem; ++i) {
-            //   gamma1(i) = arma::randg(arma::distr_param(a_vec(i), 1.0));  // generate gamma random values
-            //   gamma2(i) = arma::randg(arma::distr_param(b_vec(i), 1.0));
-            // }
-            // arma::vec sigma2_k_vec = (gamma1 + gamma2)/gamma1;
-            // paras.Sigma_inv.slice(k) = arma::diagmat(sigma2_k_vec);
-
-            // correct
-            double a_double = hyper.c_sigma2_vec + idx_k.n_elem/2;
+            arma::vec a_vec = layer_idx* hyper.c_sigma2_vec + idx_k.n_elem/2;
             arma::mat phi_res = paras.phi(idx_k,tree.idx_cor);
             phi_res.each_row() -= paras.mu(tree.idx_cor, arma::uvec{k}).t();
-            arma::vec phi_mse = arma::trans(arma::sum(phi_res%phi_res, 0)/2);
-            // arma::vec b_vec = tree.ind_layer_idx + phi_mse;  
-            // Old wrong code: possible division-by-zero if any layer index is 0,
-            // which can produce Inf rates and unstable updates.
-            // arma::vec b_vec = 1.0/layer_idx + phi_mse;
-            arma::vec layer_idx_safe = arma::clamp(layer_idx, 1.0, arma::datum::inf);
-            arma::vec b_vec = 1.0/layer_idx_safe + phi_mse;  
-            arma::vec gamma(b_vec.n_elem);
-            for (arma::uword i = 0; i < b_vec.n_elem; ++i) {
-              // gamma(i) = arma::randg(arma::distr_param(a_vec(i), 1.0/b_vec(i)));  // generate gamma random values
-              gamma(i) = arma::randg(arma::distr_param(a_double, 1.0/b_vec(i)));  // generate gamma random values
+            arma::vec b_vec = layer_idx + arma::trans(arma::sum(phi_res%phi_res, 0)/2);  
+            
+            arma::vec gamma1(a_vec.n_elem);
+            arma::vec gamma2(b_vec.n_elem);
+            for (arma::uword i = 0; i < a_vec.n_elem; ++i) {
+              gamma1(i) = arma::randg(arma::distr_param(a_vec(i), 1.0));  // generate gamma random values
+              gamma2(i) = arma::randg(arma::distr_param(b_vec(i), 1.0));
             }
-
-            paras.Sigma_inv.slice(k) = arma::diagmat(gamma);
-
-
-          }else{
-            double log_det_prev = 0.0;
-            double sign_det_prev = 0.0;
-            arma::log_det(log_det_prev, sign_det_prev, paras.Sigma_inv.slice(k));
-            bool run_ghs = (!arma::is_finite(log_det_prev) || sign_det_prev <= 0.0 || log_det_prev < log_det_max_update);
-            if(run_ghs){
-
+            arma::vec sigma2_k_vec = (gamma1 + gamma2)/gamma1;
+            
+            
+            paras.Sigma_inv.slice(k) = arma::diagmat(sigma2_k_vec);
+            
+            
+          }else if(arma::det(paras.Sigma_inv.slice(k)) < 1e200){
+            
             arma::mat phi_centered = paras.phi(idx_k, tree.idx_cor);
             phi_centered.each_row() -= paras.mu(tree.idx_cor, arma::uvec{k}).t();
             // arma::rowvec phi_mean = arma::mean(phi_centered, 0);
             // phi_centered.each_row() -= phi_mean;
             arma::mat phi_centered_Cov = phi_centered.t() * phi_centered;
-            GHS_oneSample(phi_centered_Cov, dat.n, ghs_list[k]);
+            GHS_oneSample(phi_centered_Cov, idx_k.n_elem, ghs_list[k]);
             paras.tau_sq_GHS(k) = ghs_list[k].tau_sq;
             // check if Omega is symmetric positive definite
             
             paras.Sigma_inv.slice(k) = ghs_list[k].Omega;
-
+            
             // avoids singular updates
-            double log_det_post = 0.0;
-            double sign_det_post = 0.0;
-            arma::log_det(log_det_post, sign_det_post, paras.Sigma_inv.slice(k));
-            if(sign_det_post > 0.0 && arma::is_finite(log_det_post) && log_det_post > log_det_regularize){
+            if(arma::det(paras.Sigma_inv.slice(k)) > 1e150){
               // Eigen-value regularization
               Rcout<<"Eigen-value regularization: adding a small pertubation "<<hyper.err_precision<<" to "<<k<<"-th covariance"<<std::endl;
               // Eigen decomposition of Sigma
@@ -576,70 +672,37 @@ public:
               eigvals = 1.0/eigvals + hyper.err_precision;  // Add epsilon to each eigenvalue
               arma::vec eigvals_inv = 1.0 / eigvals;
               paras.Sigma_inv.slice(k) = eigvecs * diagmat(eigvals_inv) * eigvecs.t();
-              arma::log_det(log_det_post, sign_det_post, paras.Sigma_inv.slice(k));
-              Rcout<<" log_det(Sigma_inv["<<k<<"])="<<log_det_post<<", sign="<<sign_det_post<<std::endl;
+              Rcout<<" arma::det(paras.Sigma_inv.slice(k)) ="<<arma::det(paras.Sigma_inv.slice(k)) <<std::endl;
             }
             // paras.Sigma_inv.slice(k).diag() += hyper.err_precision*arma::ones(tree.L); // to prevent singularity
-
+            
             // double prop_k = idx_k.n_elem/dat.n;
             // if( idx_k.n_elem < 30){
             //   Rcout<<"make cov ind: counts of idx_"<<k<<" is "<<idx_k.n_elem<<"; idx_k.n_elem="<<idx_k.n_elem <<std::endl;
             //   paras.Z_cor_status(k) = 0;
             // }
-          
+            
             if(iter % cov_interval == 0){
-              Rcout<<"---update_Sigma::log_det of Sigma_inv["<<k<<"]="<<log_det_post<<", sign="<<sign_det_post<<std::endl;
+              Rcout<<"---update_Sigma::det of Sigma_inv["<<k<<"]="<<arma::det(paras.Sigma_inv.slice(k))<<std::endl;
             }
           }
-          }
           
-
+          
         }
         
         // update sigma_vec
-        // arma::vec a_vec = tree.ind_layer_idx * hyper.c_sigma2_vec + idx_k.n_elem/2;
-        double a_double = hyper.c_sigma2_vec + idx_k.n_elem/2;
+        arma::vec a_vec = tree.ind_layer_idx * hyper.c_sigma2_vec + idx_k.n_elem/2;
         arma::mat phi_res = paras.phi(idx_k,tree.idx_ind);
         phi_res.each_row() -= paras.mu(tree.idx_ind, arma::uvec{k}).t();
-        arma::vec phi_mse = arma::trans(arma::sum(phi_res%phi_res, 0)/2);
-        // arma::vec b_vec = tree.ind_layer_idx + phi_mse;  
-        // Old wrong code: possible division-by-zero if any layer index is 0,
-        // which can produce Inf rates and unstable updates.
-        // arma::vec b_vec = 1.0/tree.ind_layer_idx + phi_mse;
-        arma::vec ind_layer_idx_safe = arma::clamp(tree.ind_layer_idx, 1.0, arma::datum::inf);
-        arma::vec b_vec = 1.0/ind_layer_idx_safe + phi_mse;  
-
-        // // wrong
-        // arma::vec gamma1(a_vec.n_elem);
-        // arma::vec gamma2(b_vec.n_elem);
-        // for (arma::uword i = 0; i < a_vec.n_elem; ++i) {
-        //   gamma1(i) = arma::randg(arma::distr_param(a_vec(i), 1.0));  // generate gamma random values
-        //   gamma2(i) = arma::randg(arma::distr_param(b_vec(i), 1.0));
-        // }
-        // paras.sigma2_vec.col(k) = (gamma1 + gamma2)/gamma1;
-
-        // correct: inverse gamma
-        arma::vec gamma(b_vec.n_elem);
-        for (arma::uword i = 0; i < b_vec.n_elem; ++i) {
-          // gamma(i) = arma::randg(arma::distr_param(a_vec(i), 1.0/b_vec(i)));  // generate gamma random values
-          gamma(i) = arma::randg(arma::distr_param(a_double, 1.0/b_vec(i)));  // generate gamma random values
+        arma::vec b_vec = tree.ind_layer_idx + arma::trans(arma::sum(phi_res%phi_res, 0)/2);  
+        
+        arma::vec gamma1(a_vec.n_elem);
+        arma::vec gamma2(b_vec.n_elem);
+        for (arma::uword i = 0; i < a_vec.n_elem; ++i) {
+          gamma1(i) = arma::randg(arma::distr_param(a_vec(i), 1.0));  // generate gamma random values
+          gamma2(i) = arma::randg(arma::distr_param(b_vec(i), 1.0));
         }
-        paras.sigma2_vec.col(k) = 1.0/gamma;
-        
-        // // correct: half-cauchy
-        // arma::vec gamma1(b_vec.n_elem);
-        // arma::vec gamma_a(b_vec.n_elem);
-        // arma::vec inv_a_k = paras.inv_a_vec.col(k);
-        // for (arma::uword i = 0; i < b_vec.n_elem; ++i) {
-        //   gamma1(i) = arma::randg(arma::distr_param(idx_k.n_elem/2+0.5, 
-        //                           1.0/(phi_mse(i) + inv_a_k(i)) ));  // generate gamma random values
-        //   gamma_a(i) = arma::randg(arma::distr_param(1.0,1.0/(1.0/gamma1(i) + tree.ind_layer_idx(i))));  // generate gamma random values
-        // }
-        // paras.sigma2_vec.col(k) = 1.0/gamma1;
-        // paras.inv_a_vec = 1.0/gamma_a;
-        
-
-
+        paras.sigma2_vec.col(k) = (gamma1 + gamma2)/gamma1;
       }
       
     }
@@ -647,30 +710,6 @@ public:
   };// Graphical Horseshoe prior
   
   void update_Z(){ 
-    arma::vec log_pi = arma::log(paras.pi);
-    arma::vec loglik_cor_const(dat.n_clus, arma::fill::zeros);
-    arma::uvec cor_valid(dat.n_clus, arma::fill::ones);
-    arma::vec log_det_ind(dat.n_clus, arma::fill::zeros);
-    arma::uvec ind_valid(dat.n_clus, arma::fill::ones);
-    for(arma::uword k=0; k<dat.n_clus; k++){
-      if(!all_ind){
-        double log_det_val = 0.0;
-        double sign_det = 0.0;
-        arma::log_det(log_det_val, sign_det, paras.Sigma_inv.slice(k));
-        if(sign_det <= 0.0 || !arma::is_finite(log_det_val)){
-          cor_valid(k) = 0;
-        }else{
-          loglik_cor_const(k) = 0.5 * log_det_val;
-        }
-      }
-      const arma::subview_col<double> sigma2_k = paras.sigma2_vec.col(k);
-      if(arma::any(sigma2_k <= 0.0) || !sigma2_k.is_finite()){
-        ind_valid(k) = 0;
-      }else{
-        log_det_ind(k) = arma::sum(arma::log(sigma2_k));
-      }
-    }
-
     // #pragma omp parallel for
     for(arma::uword i=0; i<dat.n; i++){
       
@@ -684,29 +723,40 @@ public:
       arma::vec phi_ind = arma::trans(paras.phi(arma::uvec{i},tree.idx_ind));
       for(arma::uword k=0; k<dat.n_clus; k++){
         if(!all_ind){
-          if(cor_valid(k) == 0){
-            loglik_cor_i(k) = -arma::datum::inf;
-          }else{
           arma::vec mu_sub = paras.mu(tree.idx_cor, arma::uvec{k});
           arma::vec diff_sub = phi_sub - mu_sub;
-          loglik_cor_i(k) = -0.5 * arma::dot(diff_sub, paras.Sigma_inv.slice(k) * diff_sub) + loglik_cor_const(k);
+          // Old wrong code: missing cluster-dependent Gaussian normalization
+          // term (+0.5 * log|Sigma_inv_k|), which can bias cluster assignment.
+          // loglik_cor_i(k) = -0.5*arma::dot(diff_sub, paras.Sigma_inv.slice(k) * diff_sub);
+          double log_det_val = 0.0;
+          double sign_det = 0.0;
+          arma::log_det(log_det_val, sign_det, paras.Sigma_inv.slice(k));
+          if(sign_det <= 0.0 || !arma::is_finite(log_det_val)){
+            loglik_cor_i(k) = -arma::datum::inf;
+          }else{
+            loglik_cor_i(k) = -0.5 * arma::dot(diff_sub, paras.Sigma_inv.slice(k) * diff_sub) + 0.5 * log_det_val;
           }
+
         }
 
         arma::vec mu_ind = paras.mu(tree.idx_ind, arma::uvec{k});
         arma::vec diff_ind = phi_ind - mu_ind;
-        const arma::subview_col<double> sigma2_k = paras.sigma2_vec.col(k);
-        if(ind_valid(k) == 0){
+        // Old wrong code: missing diagonal-Gaussian normalization term
+        // (-0.5 * sum(log(sigma2_k))), which can bias cluster assignment.
+        // loglik_ind_i(k) = -0.5*arma::dot(diff_ind, diff_ind/paras.sigma2_vec.col(k));
+        arma::vec sigma2_k = paras.sigma2_vec.col(k);
+        if(arma::any(sigma2_k <= 0.0) || !sigma2_k.is_finite()){
           loglik_ind_i(k) = -arma::datum::inf;
         }else{
           double quad_ind = arma::dot(diff_ind, diff_ind / sigma2_k);
-          loglik_ind_i(k) = -0.5 * (quad_ind + log_det_ind(k));
+          double log_det_ind = arma::sum(arma::log(sigma2_k));
+          loglik_ind_i(k) = -0.5 * (quad_ind + log_det_ind);
         }
       }
       
       arma::vec loglik_i = loglik_ind_i + loglik_cor_i;
       
-      arma::vec log_prob = loglik_i + log_pi;
+      arma::vec log_prob = loglik_i + log(paras.pi);
       // Old wrong code: if all entries are non-finite (e.g., all -Inf), this
       // normalization creates NaN probabilities and invalid CDF sampling.
       // log_prob -= arma::max(log_prob);
@@ -777,14 +827,12 @@ public:
     arma::mat loglike_mat = n_left_child % arma::log(V) + (tree.count.cols(0,tree.total_parents-1) - n_left_child) % arma::log(1.0-V);
     paras.loglike = arma::accu(loglike_mat);
 
-    if(save_cluster_cor_trace){
-      // update cluster correlation
-      arma::umat indicator_matrix(dat.n, dat.n, arma::fill::zeros);
-      for (arma::uword i = 0; i < dat.n; ++i) {
-        indicator_matrix.col(i) = (paras.Z == paras.Z(i));
-      }
-      paras.cluster_cor = indicator_matrix;
+    // update cluster correlation
+    arma::umat indicator_matrix(dat.n, dat.n, arma::fill::zeros);
+    for (arma::uword i = 0; i < dat.n; ++i) {
+      indicator_matrix.col(i) = (paras.Z == paras.Z(i));
     }
+    paras.cluster_cor = indicator_matrix;
   }
   
   void run_gibbs(){
@@ -792,7 +840,7 @@ public:
       update_omega();
       update_phi();
       update_mu();
-
+      
       if(all_ind){
         update_Sigma();
       }else if(iter % cov_interval ==0){
@@ -821,38 +869,26 @@ public:
   };
   
   void save_gibbs_sample(){
-    paras_sample.pi_sample.col(iter) = paras.pi;
-    // Old wrong code: this skips `iter == burnin`, so only
-    // (total_iter - burnin - 1) draws are stored even though memory is
-    // allocated for (total_iter - burnin) draws.
-    // if(iter > gibbs_control.burnin){
-    //   int idx = iter - gibbs_control.burnin - 1;
     if(iter >= gibbs_control.burnin){
       int idx = iter - gibbs_control.burnin;
       paras_sample.mu_sample.slice(idx) = paras.mu;
       if(!all_ind){
         paras_sample.Sigma_inv_sample[idx] = paras.Sigma_inv;
       }
-      if(save_phi_trace){
-        paras_sample.phi_sample.slice(idx) = paras.phi;
-      }
+      paras_sample.pi_sample.col(idx) = paras.pi;
+      paras_sample.phi_sample.slice(idx) = paras.phi;
       paras_sample.Z_sample.col(idx) = paras.Z;
-      if(save_cluster_cor_trace){
-        paras_sample.cluster_cor.slice(idx) = paras.cluster_cor;
-      }
+      paras_sample.cluster_cor.slice(idx) = paras.cluster_cor;
       paras_sample.tausq_GHS.col(idx) = paras.tau_sq_GHS;
-      paras_sample.sigma2_vec_sample.slice(idx) = paras.sigma2_vec;
     }
     paras_sample.loglik(iter) = paras.loglike;
   };
 
   Rcpp::List get_gibbs_sample(){
-    SEXP phi_output = save_phi_trace ? Rcpp::wrap(paras_sample.phi_sample) : R_NilValue;
-    SEXP cluster_cor_output = save_cluster_cor_trace ? Rcpp::wrap(paras_sample.cluster_cor) : R_NilValue;
     return Rcpp::List::create(Rcpp::Named("mu") = paras_sample.mu_sample,
-                              Rcpp::Named("phi") = phi_output,
+                              Rcpp::Named("phi") = paras_sample.phi_sample,
                               Rcpp::Named("Sigma_inv") = paras_sample.Sigma_inv_sample,
-                              Rcpp::Named("sigma2_vec") = paras_sample.sigma2_vec_sample,
+                              Rcpp::Named("cluster_cor") = paras_sample.cluster_cor,
                               Rcpp::Named("tausq_GHS") = paras_sample.tausq_GHS,
                               Rcpp::Named("pi") = paras_sample.pi_sample,
                               Rcpp::Named("Z") = paras_sample.Z_sample,
@@ -863,37 +899,34 @@ public:
 };
 
 // [[Rcpp::export]]
-Rcpp::List CorTree_sampler(arma::mat X, 
-                      int n_clus, int tree_depth, int cutoff_layer, 
+Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree,
+                      int n_clus, int cutoff_layer, 
                       int total_iter, int burnin, int warm_start=0,
                       arma::uvec init_Z = arma::zeros<arma::uvec>(1),
                       double c_sigma2_vec = 1.0, 
                       double sigma_mu2=1.0,
                       bool all_ind = false,
-                      int cov_interval = 1,
-                      bool save_phi_trace = true,
-                      bool save_cluster_cor_trace = true){
+                      int cov_interval = 1){
+  Rcout<<"begin PhyloTree_sampler"<<std::endl;
   arma::wall_clock timer;
   timer.tic();
-  CorTree model;
+  PhyloTree model;
 
   if(init_Z.n_elem == 1){
-    init_Z = arma::randi<arma::uvec>(X.n_rows, arma::distr_param(0, n_clus-1));
+    init_Z = arma::randi<arma::uvec>(count_data.n_rows, arma::distr_param(0, n_clus-1));
   }
   
   model.all_ind = all_ind;
-  model.save_phi_trace = save_phi_trace;
-  model.save_cluster_cor_trace = save_cluster_cor_trace;
   model.warm_start = warm_start;
   model.cov_interval = cov_interval;
-  model.load_data(X, n_clus);
-  Rcout << "Data loaded" << std::endl;
+  model.load_data(count_data, n_clus);
+  Rcpp::Rcout << "Data loaded" << std::endl;
   model.set_hyperparameter(c_sigma2_vec, sigma_mu2);
-  Rcout << "Hyperparameter set" << std::endl;
+  Rcpp::Rcout << "Hyperparameter set" << std::endl;
   model.set_gibbs_control(total_iter, burnin);
-  Rcout << "Gibbs control set" << std::endl;
-  model.vectorize_tree(tree_depth, cutoff_layer);
-  Rcout << "Tree vectorized" << std::endl;
+  Rcpp::Rcout << "Gibbs control set" << std::endl;
+  model.vectorize_tree(count_data, tree, cutoff_layer);
+  Rcpp::Rcout << "Tree vectorized" << std::endl;
   model.initialize_parameters(init_Z);
   Rcout << "Parameters initialized" << std::endl;
   model.initialize_mcmc_sample();

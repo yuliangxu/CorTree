@@ -3,7 +3,7 @@
 devtools::load_all()
 library(dplyr)
 
-set.seed(2025+24)
+set.seed(2025+2)
 
 # generate samples from mixtures -----------------------------------------------
 
@@ -48,17 +48,17 @@ Z_pam = c(pamx$clustering)
 
 tree_depth <- 6
 cutoff_layer <- 4
-burnin <- 50
-total_iter <- burnin + 30
+burnin <- 200
+total_iter <- burnin + 50
 c_sigma2_vec <- 10
 sigma_mu2 <- 0.1
-cov_interval <- 3
+cov_interval <- 5
 X_rowsum_raw = rowSums(X)
 X_rowsum = dplyr::ntile(X_rowsum_raw, n_clus + 1)
 devtools::load_all()
 cortree <- CorTree_sampler(X = X,
   n_clus = n_clus + 1L,
-  init_Z = X_rowsum-1,
+  init_Z = X_rowsum - 1,
   tree_depth = tree_depth,
   cutoff_layer = cutoff_layer,
   total_iter = total_iter,
@@ -72,48 +72,50 @@ cortree <- CorTree_sampler(X = X,
 
 cortree$elapsed
 
-# clustering pattern -----------------------------------------------------------
-
 Z_cortree = apply(cortree$mcmc$Z[, -c(total_iter - burnin)], 1, mean)
 Z_cortree = round(Z_cortree)
 table(Z_cortree)
-
 mclust::adjustedRandIndex(Z_true, Z_cortree)
 
-# check correlated Sigma -------------------------------------------------------
+plot(cortree$mcmc$loglik, type = "l")
 
-n_cov_mcmc = length(cortree$mcmc$Sigma_inv) - 1
-Sigma_inv_mcmc = array(NA, dim = c(n_cov_mcmc, dim(cortree$mcmc$Sigma_inv[[1]])))
-for(m in 1:n_cov_mcmc){
-  Sigma_inv_mcmc[m, , , ] = cortree$mcmc$Sigma_inv[[m]]
-}
+# trace plot of pi
+pi_trace = t(cortree$mcmc$pi)
+matplot(pi_trace, type = "l", lty = 1, col = 1:ncol(pi_trace))
+legend("topright", legend = paste0("Cluster ", 1:ncol(pi_trace)), col = 1:ncol(pi_trace), lty = 1)
 
-Sigma_all_clus = array(NA, dim = c(dim(cortree$mcmc$Sigma_inv[[1]])))
-for(k in 1:(n_clus + 1)){
-  Sigma_inv_mean = apply(Sigma_inv_mcmc[, , , k], 2:3, mean)
-  Sigma_all_clus[, , k] = chol2inv(chol(Sigma_inv_mean))
-}
 
-if ((n_clus + 1) >= 3) {
-  plot_two_mat(Sigma_all_clus[, , 2], Sigma_all_clus[, , 3])
-}
+# run ind-tree ----------------------------------------------------------
 
-# compare phi mean to empirical phi -------------------------------------------
+# removed err_precision to prevent singularity
+tree_depth <- 6
+cutoff_layer <- 3    # Layer for correlated nodes cutoff
 
-phi_mean_cor = apply(cortree$mcmc$phi, c(1, 2), mean)
-X_tree = construct_tree(X, tree_depth)
-empirical_phi = X_tree$empirical_phi
+burnin <- 100        # Burn-in period
+total_iter <- burnin + 50   # Total iterations
+c_sigma2_vec <- 10  # Hyperparameter for sigma^2 vector. 1/c is the mean
+sigma_mu2 <- 0.1     # Hyperparameter for sigma_mu^2
+# Call the CorTree_sampler function
 
-par(mfrow = c(5, 3))
-for(j in 1:15){
-  plot(phi_mean_cor[, j], empirical_phi[, j], col = Z_true, asp = 1, main = paste0("phi_j", j))
-  abline(0, 1)
-}
-for(j in 16:30){
-  plot(phi_mean_cor[, j], empirical_phi[, j], col = Z_true, asp = 1, main = paste0("phi_j", j))
-  abline(0, 1)
-}
-for(j in 31:45){
-  plot(phi_mean_cor[, j], empirical_phi[, j], col = Z_true, asp = 1, main = paste0("phi_j", j))
-  abline(0, 1)
-}
+indtree <- CorTree_sampler(X, 
+                            # init_Z = Z_pam-1,
+                            init_Z = X_rowsum-1,
+                            n_clus = n_clus+1, 
+                            tree_depth, 
+                            cutoff_layer, 
+                            total_iter, 
+                            burnin, 
+                            c_sigma2_vec, 
+                            sigma_mu2,
+                            warm_start = 0,
+                            all_ind = T)
+indtree$elapsed
+par(mfrow = c(1,1))
+plot(indtree$mcmc$loglik,type="l")
+
+# clustering pattern
+Z_indtree = apply(indtree$mcmc$Z[,-c(total_iter-burnin)],1,mean);table(Z_indtree)
+Z_indtree = round(Z_indtree); table(Z_indtree)
+
+mclust::adjustedRandIndex(Z_true, Z_indtree)
+
