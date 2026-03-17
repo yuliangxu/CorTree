@@ -50,39 +50,33 @@ double truncgamma();
 double randinvg(double);
 double aterm(int, double, double);
 
-// // [[Rcpp::export]]
-// arma::rowvec arma_pgdraw(arma::rowvec b, arma::rowvec c)
-// {
-//   //Rcout<<"b:" <<b;
-// 	int m = b.n_elem;
-// 	int n = c.n_elem;
-// 	arma::rowvec y(n);
-// 
-// 	// Setup
-// 	int i, j, bi = 1;
-// 	if (m == 1)
-// 	{
-// 		bi = b(0);
-// 	}
-// 
-// 	// Sample
-// 	for (i = 0; i < n; i++) // shouldn't this be m?
-// 	{
-// 		if (m > 1)
-// 		{
-// 			bi = b(i);
-// 		}
-// 
-// 		// Sample
-// 		y(i) = 0;
-// 		for (j = 0; j < (int)bi; j++)
-// 		{
-// 			y(i) += samplepg(c(i));
-// 		}
-// 	}
-// 
-// 	return y;
-// }
+arma::vec arma_pgdraw(const arma::vec& b, const arma::vec& c)
+{
+  int m = b.n_elem;
+  int n = c.n_elem;
+  arma::vec y(n, arma::fill::zeros);
+
+  int i, j, bi = 1;
+  if (m == 1)
+  {
+    bi = static_cast<int>(b(0));
+  }
+
+  for (i = 0; i < n; i++)
+  {
+    if (m > 1)
+    {
+      bi = static_cast<int>(b(i));
+    }
+
+    for (j = 0; j < bi; j++)
+    {
+      y(i) += samplepg(c(i));
+    }
+  }
+
+  return y;
+}
 
 
 // [[Rcpp::export]]

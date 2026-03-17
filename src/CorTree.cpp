@@ -109,6 +109,9 @@ public:
   bool save_cluster_cor_trace = true;
   int warm_start = 0;
   int cov_interval = 1;
+  double z_det_gamma0 = 1.0;
+  bool z_det_gamma_linear = false;
+  int z_mode = 0; // 0: current robust update_Z, 1: v1-like update_Z
   int clustering_freq = 1;
 
   arma::uword find_parent(arma::uword node){
@@ -330,14 +333,10 @@ public:
     
     // #pragma omp parallel for
     for(int i = 0; i < dat.X.n_rows; i++){
-      arma::rowvec b_i = tree.count.row(i).cols(0, tree.total_parents-1);
-      // Old wrong code: indexed phi by cluster label instead of sample index.
-      // arma::rowvec c_i = paras.phi.row(paras.Z(i));
-      arma::rowvec c_i = paras.phi.row(i);
-      // arma::rowvec omega_i = arma_pgdraw(b_i, c_i);
-      NumericVector omega_i_vec = rcpp_pgdraw(Rcpp::NumericVector(b_i.begin(), b_i.end()), 
-                                              Rcpp::NumericVector(c_i.begin(), c_i.end()));
-      paras.omega.row(i) = arma::rowvec(omega_i_vec.begin(), omega_i_vec.size());
+      arma::vec b_i = tree.count.row(i).cols(0, tree.total_parents-1).t();
+      arma::vec c_i = paras.phi.row(i).t();
+      arma::vec omega_i = arma_pgdraw(b_i, c_i);
+      paras.omega.row(i) = omega_i.t();
     }
   };
   
@@ -647,94 +646,121 @@ public:
   };// Graphical Horseshoe prior
   
   void update_Z(){ 
-    arma::vec log_pi = arma::log(paras.pi);
-    arma::vec loglik_cor_const(dat.n_clus, arma::fill::zeros);
-    arma::uvec cor_valid(dat.n_clus, arma::fill::ones);
-    arma::vec log_det_ind(dat.n_clus, arma::fill::zeros);
-    arma::uvec ind_valid(dat.n_clus, arma::fill::ones);
-    for(arma::uword k=0; k<dat.n_clus; k++){
-      if(!all_ind){
-        double log_det_val = 0.0;
-        double sign_det = 0.0;
-        arma::log_det(log_det_val, sign_det, paras.Sigma_inv.slice(k));
-        if(sign_det <= 0.0 || !arma::is_finite(log_det_val)){
-          cor_valid(k) = 0;
-        }else{
-          loglik_cor_const(k) = 0.5 * log_det_val;
-        }
-      }
-      const arma::subview_col<double> sigma2_k = paras.sigma2_vec.col(k);
-      if(arma::any(sigma2_k <= 0.0) || !sigma2_k.is_finite()){
-        ind_valid(k) = 0;
-      }else{
-        log_det_ind(k) = arma::sum(arma::log(sigma2_k));
-      }
+    double gamma_det = 1.0;
+    if(z_det_gamma_linear && gibbs_control.burnin > 1 && iter < gibbs_control.burnin){
+      double frac = static_cast<double>(iter) / static_cast<double>(gibbs_control.burnin - 1);
+      gamma_det = z_det_gamma0 + (1.0 - z_det_gamma0) * frac;
+      gamma_det = std::min(1.0, std::max(0.0, gamma_det));
     }
-
-    // #pragma omp parallel for
-    for(arma::uword i=0; i<dat.n; i++){
-      
-      arma::vec loglik_cor_i(dat.n_clus); loglik_cor_i.zeros();
-      arma::vec loglik_ind_i(dat.n_clus);
-      arma::vec phi_sub;
-      if(!all_ind){
-         phi_sub = arma::trans(paras.phi(arma::uvec{i},tree.idx_cor));
+    arma::vec log_pi = arma::log(paras.pi);
+    if(z_mode == 1){
+      // v1-like assignment update (ablation): omit log-det constants and finite guards
+      for(arma::uword i=0; i<dat.n; i++){
+        arma::vec loglik_cor_i(dat.n_clus); loglik_cor_i.zeros();
+        arma::vec loglik_ind_i(dat.n_clus);
+        arma::vec phi_sub;
+        if(!all_ind){
+          phi_sub = arma::trans(paras.phi(arma::uvec{i},tree.idx_cor));
+        }
+        arma::vec phi_ind = arma::trans(paras.phi(arma::uvec{i},tree.idx_ind));
+        for(arma::uword k=0; k<dat.n_clus; k++){
+          if(!all_ind){
+            arma::vec mu_sub = paras.mu(tree.idx_cor, arma::uvec{k});
+            arma::vec diff_sub = phi_sub - mu_sub;
+            loglik_cor_i(k) = -0.5*arma::dot(diff_sub, paras.Sigma_inv.slice(k) * diff_sub);
+          }
+          arma::vec mu_ind = paras.mu(tree.idx_ind, arma::uvec{k});
+          arma::vec diff_ind = phi_ind - mu_ind;
+          loglik_ind_i(k) = -0.5*arma::dot(diff_ind, diff_ind/paras.sigma2_vec.col(k));
+        }
+        arma::vec loglik_i = loglik_ind_i + loglik_cor_i;
+        arma::vec log_prob = loglik_i + log_pi;
+        log_prob -= arma::max(log_prob);
+        log_prob = arma::exp(log_prob);
+        log_prob /= arma::sum(log_prob);
+        arma::vec CDF = arma::cumsum(log_prob);
+        double u = arma::randu();
+        if(max(CDF) < u){
+          Rcout<<"---Error: update_Z::CDF="<<CDF.t()<<std::endl;
+        }
+        paras.Z(i) = arma::as_scalar(arma::find(CDF >= u, 1));
       }
-      
-      arma::vec phi_ind = arma::trans(paras.phi(arma::uvec{i},tree.idx_ind));
+    }else{
+      // current robust assignment update
+      arma::vec loglik_cor_const(dat.n_clus, arma::fill::zeros);
+      arma::uvec cor_valid(dat.n_clus, arma::fill::ones);
+      arma::vec log_det_ind(dat.n_clus, arma::fill::zeros);
+      arma::uvec ind_valid(dat.n_clus, arma::fill::ones);
       for(arma::uword k=0; k<dat.n_clus; k++){
         if(!all_ind){
-          if(cor_valid(k) == 0){
-            loglik_cor_i(k) = -arma::datum::inf;
+          double log_det_val = 0.0;
+          double sign_det = 0.0;
+          arma::log_det(log_det_val, sign_det, paras.Sigma_inv.slice(k));
+          if(sign_det <= 0.0 || !arma::is_finite(log_det_val)){
+            cor_valid(k) = 0;
           }else{
-          arma::vec mu_sub = paras.mu(tree.idx_cor, arma::uvec{k});
-          arma::vec diff_sub = phi_sub - mu_sub;
-          loglik_cor_i(k) = -0.5 * arma::dot(diff_sub, paras.Sigma_inv.slice(k) * diff_sub) + loglik_cor_const(k);
+            loglik_cor_const(k) = 0.5 * gamma_det * log_det_val;
           }
         }
-
-        arma::vec mu_ind = paras.mu(tree.idx_ind, arma::uvec{k});
-        arma::vec diff_ind = phi_ind - mu_ind;
         const arma::subview_col<double> sigma2_k = paras.sigma2_vec.col(k);
-        if(ind_valid(k) == 0){
-          loglik_ind_i(k) = -arma::datum::inf;
+        if(arma::any(sigma2_k <= 0.0) || !sigma2_k.is_finite()){
+          ind_valid(k) = 0;
         }else{
-          double quad_ind = arma::dot(diff_ind, diff_ind / sigma2_k);
-          loglik_ind_i(k) = -0.5 * (quad_ind + log_det_ind(k));
+          log_det_ind(k) = arma::sum(arma::log(sigma2_k));
         }
       }
-      
-      arma::vec loglik_i = loglik_ind_i + loglik_cor_i;
-      
-      arma::vec log_prob = loglik_i + log_pi;
-      // Old wrong code: if all entries are non-finite (e.g., all -Inf), this
-      // normalization creates NaN probabilities and invalid CDF sampling.
-      // log_prob -= arma::max(log_prob);
-      // log_prob = arma::exp(log_prob);
-      // log_prob /= arma::sum(log_prob);
-      arma::uvec finite_idx = arma::find_finite(log_prob);
-      if(finite_idx.n_elem == 0){
-        log_prob.fill(1.0/static_cast<double>(dat.n_clus));
-      }else{
-        arma::vec prob = arma::zeros<arma::vec>(dat.n_clus);
-        double max_finite = log_prob(finite_idx).max();
-        prob(finite_idx) = arma::exp(log_prob(finite_idx) - max_finite);
-        double prob_sum = arma::sum(prob);
-        if(!arma::is_finite(prob_sum) || prob_sum <= 0.0){
+
+      for(arma::uword i=0; i<dat.n; i++){
+        arma::vec loglik_cor_i(dat.n_clus); loglik_cor_i.zeros();
+        arma::vec loglik_ind_i(dat.n_clus);
+        arma::vec phi_sub;
+        if(!all_ind){
+          phi_sub = arma::trans(paras.phi(arma::uvec{i},tree.idx_cor));
+        }
+        arma::vec phi_ind = arma::trans(paras.phi(arma::uvec{i},tree.idx_ind));
+        for(arma::uword k=0; k<dat.n_clus; k++){
+          if(!all_ind){
+            if(cor_valid(k) == 0){
+              loglik_cor_i(k) = -arma::datum::inf;
+            }else{
+              arma::vec mu_sub = paras.mu(tree.idx_cor, arma::uvec{k});
+              arma::vec diff_sub = phi_sub - mu_sub;
+              loglik_cor_i(k) = -0.5 * arma::dot(diff_sub, paras.Sigma_inv.slice(k) * diff_sub) + loglik_cor_const(k);
+            }
+          }
+          arma::vec mu_ind = paras.mu(tree.idx_ind, arma::uvec{k});
+          arma::vec diff_ind = phi_ind - mu_ind;
+          const arma::subview_col<double> sigma2_k = paras.sigma2_vec.col(k);
+          if(ind_valid(k) == 0){
+            loglik_ind_i(k) = -arma::datum::inf;
+          }else{
+            double quad_ind = arma::dot(diff_ind, diff_ind / sigma2_k);
+            loglik_ind_i(k) = -0.5 * (quad_ind + gamma_det * log_det_ind(k));
+          }
+        }
+        arma::vec loglik_i = loglik_ind_i + loglik_cor_i;
+        arma::vec log_prob = loglik_i + log_pi;
+        arma::uvec finite_idx = arma::find_finite(log_prob);
+        if(finite_idx.n_elem == 0){
           log_prob.fill(1.0/static_cast<double>(dat.n_clus));
         }else{
-          log_prob = prob / prob_sum;
+          arma::vec prob = arma::zeros<arma::vec>(dat.n_clus);
+          double max_finite = log_prob(finite_idx).max();
+          prob(finite_idx) = arma::exp(log_prob(finite_idx) - max_finite);
+          double prob_sum = arma::sum(prob);
+          if(!arma::is_finite(prob_sum) || prob_sum <= 0.0){
+            log_prob.fill(1.0/static_cast<double>(dat.n_clus));
+          }else{
+            log_prob = prob / prob_sum;
+          }
         }
+        arma::vec CDF = arma::cumsum(log_prob);
+        double u = arma::randu();
+        if(max(CDF) < u){
+          Rcout<<"---Error: update_Z::CDF="<<CDF.t()<<std::endl;
+        }
+        paras.Z(i) = arma::as_scalar(arma::find(CDF >= u, 1));
       }
-      arma::vec CDF = arma::cumsum(log_prob);
-      // Draw a sample from the multinomial distribution using the CDF
-      double u = arma::randu();
-      if(max(CDF) < u){
-        Rcout<<"---Error: update_Z::CDF="<<CDF.t()<<std::endl;
-      }
-      paras.Z(i) = arma::as_scalar(arma::find(CDF >= u, 1));
-      
-      
     }
 
     // release the covariance status
@@ -871,8 +897,11 @@ Rcpp::List CorTree_sampler(arma::mat X,
                       double sigma_mu2=1.0,
                       bool all_ind = false,
                       int cov_interval = 1,
-                      bool save_phi_trace = true,
-                      bool save_cluster_cor_trace = true){
+                      bool save_phi_trace = false,
+                      bool save_cluster_cor_trace = false,
+                      double z_det_gamma0 = 1.0,
+                      int z_mode = 0,
+                      bool z_det_gamma_linear = false){
   arma::wall_clock timer;
   timer.tic();
   CorTree model;
@@ -886,6 +915,9 @@ Rcpp::List CorTree_sampler(arma::mat X,
   model.save_cluster_cor_trace = save_cluster_cor_trace;
   model.warm_start = warm_start;
   model.cov_interval = cov_interval;
+  model.z_det_gamma0 = z_det_gamma0;
+  model.z_mode = z_mode;
+  model.z_det_gamma_linear = z_det_gamma_linear;
   model.load_data(X, n_clus);
   Rcout << "Data loaded" << std::endl;
   model.set_hyperparameter(c_sigma2_vec, sigma_mu2);

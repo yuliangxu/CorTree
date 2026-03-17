@@ -12,8 +12,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // CorTree_sampler
-Rcpp::List CorTree_sampler(arma::mat X, int n_clus, int tree_depth, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval, bool save_phi_trace, bool save_cluster_cor_trace);
-RcppExport SEXP _CorTree_CorTree_sampler(SEXP XSEXP, SEXP n_clusSEXP, SEXP tree_depthSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP, SEXP save_phi_traceSEXP, SEXP save_cluster_cor_traceSEXP) {
+Rcpp::List CorTree_sampler(arma::mat X, int n_clus, int tree_depth, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval, bool save_phi_trace, bool save_cluster_cor_trace, double z_det_gamma0, int z_mode, bool z_det_gamma_linear);
+RcppExport SEXP _CorTree_CorTree_sampler(SEXP XSEXP, SEXP n_clusSEXP, SEXP tree_depthSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP, SEXP save_phi_traceSEXP, SEXP save_cluster_cor_traceSEXP, SEXP z_det_gamma0SEXP, SEXP z_modeSEXP, SEXP z_det_gamma_linearSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -31,7 +31,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type cov_interval(cov_intervalSEXP);
     Rcpp::traits::input_parameter< bool >::type save_phi_trace(save_phi_traceSEXP);
     Rcpp::traits::input_parameter< bool >::type save_cluster_cor_trace(save_cluster_cor_traceSEXP);
-    rcpp_result_gen = Rcpp::wrap(CorTree_sampler(X, n_clus, tree_depth, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_cluster_cor_trace));
+    Rcpp::traits::input_parameter< double >::type z_det_gamma0(z_det_gamma0SEXP);
+    Rcpp::traits::input_parameter< int >::type z_mode(z_modeSEXP);
+    Rcpp::traits::input_parameter< bool >::type z_det_gamma_linear(z_det_gamma_linearSEXP);
+    rcpp_result_gen = Rcpp::wrap(CorTree_sampler(X, n_clus, tree_depth, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_cluster_cor_trace, z_det_gamma0, z_mode, z_det_gamma_linear));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -141,7 +144,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_CorTree_CorTree_sampler", (DL_FUNC) &_CorTree_CorTree_sampler, 14},
+    {"_CorTree_CorTree_sampler", (DL_FUNC) &_CorTree_CorTree_sampler, 17},
     {"_CorTree_CorTree_heldout_logpred", (DL_FUNC) &_CorTree_CorTree_heldout_logpred, 7},
     {"_CorTree_CorTree_heldout_membership", (DL_FUNC) &_CorTree_CorTree_heldout_membership, 7},
     {"_CorTree_aggregate_tree_counts", (DL_FUNC) &_CorTree_aggregate_tree_counts, 2},
