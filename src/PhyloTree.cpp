@@ -268,6 +268,8 @@ public:
   std::vector<GHS_params> ghs_list;
   Rcpp::List test_output;
   bool all_ind = false;
+  bool save_phi_trace = false;
+  bool save_sigma_inv_trace = false;
   int warm_start = 0;
   int cov_interval = 1;
 
@@ -294,8 +296,10 @@ public:
 
   void initialize_mcmc_sample(){
     paras_sample.mu_sample = arma::zeros<arma::cube>(tree.total_parents, dat.n_clus, gibbs_control.mcmc_sample);
-    paras_sample.phi_sample = arma::zeros<arma::cube>(dat.n, tree.total_parents, gibbs_control.mcmc_sample);
-    if(!all_ind){
+    if(save_phi_trace){
+      paras_sample.phi_sample = arma::zeros<arma::cube>(dat.n, tree.total_parents, gibbs_control.mcmc_sample);
+    }
+    if(!all_ind && save_sigma_inv_trace){
       paras_sample.Sigma_inv_sample = Rcpp::List(gibbs_control.mcmc_sample);
     }
     paras_sample.pi_sample = arma::zeros<arma::mat>(dat.n_clus, gibbs_control.mcmc_sample);
@@ -872,11 +876,13 @@ public:
     if(iter >= gibbs_control.burnin){
       int idx = iter - gibbs_control.burnin;
       paras_sample.mu_sample.slice(idx) = paras.mu;
-      if(!all_ind){
+      if(!all_ind && save_sigma_inv_trace){
         paras_sample.Sigma_inv_sample[idx] = paras.Sigma_inv;
       }
       paras_sample.pi_sample.col(idx) = paras.pi;
-      paras_sample.phi_sample.slice(idx) = paras.phi;
+      if(save_phi_trace){
+        paras_sample.phi_sample.slice(idx) = paras.phi;
+      }
       paras_sample.Z_sample.col(idx) = paras.Z;
       paras_sample.cluster_cor.slice(idx) = paras.cluster_cor;
       paras_sample.tausq_GHS.col(idx) = paras.tau_sq_GHS;
@@ -885,9 +891,11 @@ public:
   };
 
   Rcpp::List get_gibbs_sample(){
+    SEXP phi_output = save_phi_trace ? Rcpp::wrap(paras_sample.phi_sample) : R_NilValue;
+    SEXP sigma_inv_output = save_sigma_inv_trace ? Rcpp::wrap(paras_sample.Sigma_inv_sample) : R_NilValue;
     return Rcpp::List::create(Rcpp::Named("mu") = paras_sample.mu_sample,
-                              Rcpp::Named("phi") = paras_sample.phi_sample,
-                              Rcpp::Named("Sigma_inv") = paras_sample.Sigma_inv_sample,
+                              Rcpp::Named("phi") = phi_output,
+                              Rcpp::Named("Sigma_inv") = sigma_inv_output,
                               Rcpp::Named("cluster_cor") = paras_sample.cluster_cor,
                               Rcpp::Named("tausq_GHS") = paras_sample.tausq_GHS,
                               Rcpp::Named("pi") = paras_sample.pi_sample,
@@ -906,7 +914,9 @@ Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree,
                       double c_sigma2_vec = 1.0, 
                       double sigma_mu2=1.0,
                       bool all_ind = false,
-                      int cov_interval = 1){
+                      int cov_interval = 1,
+                      bool save_phi_trace = false,
+                      bool save_sigma_inv_trace = false){
   Rcout<<"begin PhyloTree_sampler"<<std::endl;
   arma::wall_clock timer;
   timer.tic();
@@ -917,6 +927,8 @@ Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree,
   }
   
   model.all_ind = all_ind;
+  model.save_phi_trace = save_phi_trace;
+  model.save_sigma_inv_trace = save_sigma_inv_trace;
   model.warm_start = warm_start;
   model.cov_interval = cov_interval;
   model.load_data(count_data, n_clus);

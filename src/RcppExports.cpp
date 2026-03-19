@@ -109,8 +109,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // PhyloTree_sampler
-Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree, int n_clus, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval);
-RcppExport SEXP _CorTree_PhyloTree_sampler(SEXP count_dataSEXP, SEXP treeSEXP, SEXP n_clusSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP) {
+Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree, int n_clus, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval, bool save_phi_trace, bool save_sigma_inv_trace);
+RcppExport SEXP _CorTree_PhyloTree_sampler(SEXP count_dataSEXP, SEXP treeSEXP, SEXP n_clusSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP, SEXP save_phi_traceSEXP, SEXP save_sigma_inv_traceSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -126,7 +126,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type sigma_mu2(sigma_mu2SEXP);
     Rcpp::traits::input_parameter< bool >::type all_ind(all_indSEXP);
     Rcpp::traits::input_parameter< int >::type cov_interval(cov_intervalSEXP);
-    rcpp_result_gen = Rcpp::wrap(PhyloTree_sampler(count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval));
+    Rcpp::traits::input_parameter< bool >::type save_phi_trace(save_phi_traceSEXP);
+    Rcpp::traits::input_parameter< bool >::type save_sigma_inv_trace(save_sigma_inv_traceSEXP);
+    rcpp_result_gen = Rcpp::wrap(PhyloTree_sampler(count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_sigma_inv_trace));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -150,7 +152,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_CorTree_aggregate_tree_counts", (DL_FUNC) &_CorTree_aggregate_tree_counts, 2},
     {"_CorTree_isIn", (DL_FUNC) &_CorTree_isIn, 2},
     {"_CorTree_complementarySet", (DL_FUNC) &_CorTree_complementarySet, 2},
-    {"_CorTree_PhyloTree_sampler", (DL_FUNC) &_CorTree_PhyloTree_sampler, 12},
+    {"_CorTree_PhyloTree_sampler", (DL_FUNC) &_CorTree_PhyloTree_sampler, 14},
     {"_CorTree_rcpp_pgdraw", (DL_FUNC) &_CorTree_rcpp_pgdraw, 2},
     {NULL, NULL, 0}
 };
