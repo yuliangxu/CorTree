@@ -1,8 +1,7 @@
 
 rm(list = ls())
-# setwd("~/Dropbox/2019_Spring/HDTM_cluster/Application/AG")
-Tree_path = '/Users/yuliangxu/Library/Mobile Documents/com~apple~CloudDocs/MyDrive/Research/Tree/code/AutoTree'
-ag_data = file.path(Tree_path, 'data/ag_data')
+Tree_path = normalizePath(".")
+ag_data = file.path(Tree_path, 'data')
 # BiocManager::install("phyloseq")
 
 
@@ -11,7 +10,7 @@ library(phyloseq)
 library(ape)
 library(dplyr)
 
-AG_tree = read_tree_greengenes(file.path(ag_data,"97_otus.tree"))        #-import the phylogenetric tree
+AG_tree = phyloseq::read_tree_greengenes(file.path(ag_data,"97_otus.tree"))        #-import the phylogenetric tree
 otu = fread(file.path(ag_data,'ag_fecal_from_biom.txt'), header = TRUE)  #-import the otu table
 
 

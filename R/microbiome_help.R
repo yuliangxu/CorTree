@@ -103,7 +103,7 @@ hist_by_group_gg <- function(x, z,
       title = if (is.null(title)) "Histogram by Group" else title,
       x     = if (is.null(xlab))   "log(x+1)" else xlab,
       y     = if (is.null(ylab))   "Count"    else ylab,
-      fill  = "Group"
+      fill  = NULL
     ) +
     ggplot2::theme_minimal()+
     ggplot2::theme(
@@ -123,7 +123,9 @@ hist_by_group_gg <- function(x, z,
 cluster_mean_gg <- function(X, chip_labels,
                                                         y_max    = NULL,
                                                         n_thresh = 10,
-                                                        title    = "") {
+                                                        title    = "",
+                                                        x_label  = "Position",
+                                                        y_label  = "Signal") {
   # Dependencies
   if (!requireNamespace("ggplot2", quietly=TRUE) ||
       !requireNamespace("tidyr",   quietly=TRUE)) {
@@ -155,6 +157,7 @@ cluster_mean_gg <- function(X, chip_labels,
     names_to  = "label",
     values_to = "signal"
   )
+  df_long <- df_long[!is.na(df_long$signal), , drop = FALSE]
   
   # 5) Factor labels to include counts
   df_long$label <- factor(
@@ -167,18 +170,23 @@ cluster_mean_gg <- function(X, chip_labels,
   if (is.null(y_max)) {
     y_max <- max(df_long$signal, na.rm=TRUE)
   }
+
+  cluster_palette <- setNames(
+    scales::hue_pal(h = c(15, 375), c = 100, l = 65)(length(valid)),
+    paste0(valid, ":", counts[valid])
+  )
   
   # 7) Plot
   p <- ggplot2::ggplot(df_long,
                        ggplot2::aes(x = Position,
                                     y = signal,
                                     color = label)) +
-    ggplot2::geom_line(linewidth = 1, alpha = 0.7) +
-    ggplot2::scale_color_brewer(palette = "Set1", name = NULL) +
+    ggplot2::geom_line(linewidth = 1, alpha = 0.7, na.rm = TRUE) +
+    ggplot2::scale_color_manual(values = cluster_palette, name = NULL) +
     ggplot2::labs(
       title = title,
-      x     = "Position",
-      y     = "Signal"
+      x     = x_label,
+      y     = y_label
     ) +
     ggplot2::coord_cartesian(ylim = c(0, y_max)) +
     ggplot2::theme_minimal() +

@@ -1,14 +1,15 @@
 rm(list = ls())
 
-sim_dir <- "./sim_result"
+out_dir = "/cwork/yx306/CorTree"
+sim_dir <- out_dir
 files <- list.files(sim_dir, pattern = "\\.rds$", full.names = TRUE)
 if (length(files) == 0L) {
   stop("No .rds files found in ./sim_result")
 }
 
 # Expected column order in saved matrices:
-# 1: K-means, 2: PAM, 3: IndTree, 4: CorTree
-method_names <- c("K-means", "PAM", "IndTree", "CorTree")
+# 1: K-means, 2: PAM, 3: DMM, 4: IndTree, 5: CorTree
+method_names <- c("K-means", "PAM", "DMM", "IndTree", "CorTree")
 
 make_summary_table <- function(ari_mat, time_mat, method_names, file_name = NA_character_) {
   out <- data.frame(
@@ -49,7 +50,7 @@ for (f in files) {
   time_mat <- as.matrix(obj$time)
 
   if (ncol(ari_mat) < length(method_names) || ncol(time_mat) < length(method_names)) {
-    warning("Skipping file with fewer than 4 method columns: ", basename(f))
+    warning("Skipping file with fewer than 5 method columns: ", basename(f))
     next
   }
 

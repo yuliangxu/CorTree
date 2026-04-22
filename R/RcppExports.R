@@ -28,8 +28,8 @@ complementarySet <- function(a, b) {
     .Call(`_CorTree_complementarySet`, a, b)
 }
 
-PhyloTree_sampler <- function(count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start = 0L, init_Z, c_sigma2_vec = 1.0, sigma_mu2 = 1.0, all_ind = FALSE, cov_interval = 1L, save_phi_trace = FALSE, save_sigma_inv_trace = FALSE) {
-    .Call(`_CorTree_PhyloTree_sampler`, count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_sigma_inv_trace)
+PhyloTree_sampler <- function(count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start = 0L, init_Z, c_sigma2_vec = 1.0, sigma_mu2 = 1.0, all_ind = FALSE, cov_interval = 1L, save_phi_trace = FALSE, save_sigma_inv_trace = FALSE, save_cluster_cor_trace = FALSE) {
+    .Call(`_CorTree_PhyloTree_sampler`, count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_sigma_inv_trace, save_cluster_cor_trace)
 }
 
 rcpp_pgdraw <- function(b, c) {

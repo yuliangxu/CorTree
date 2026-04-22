@@ -9,5 +9,6 @@ src/*.so
 src/*.dll
 
 /data/
+/out/
 
 /data/

@@ -1,10 +1,18 @@
+# Sys.getenv("PATH")
+# Sys.getenv("LD_LIBRARY_PATH")
+# system("which g++")
+# system("g++ --version")
+
+devtools::load_all()
+
+
 rm(list = ls())
 devtools::load_all()
 set.seed(2026)
 
 project_dir <- normalizePath(".")
 data_path <- file.path(project_dir, "data", "Cluster_AG_subsample.rds")
-out_dir <- file.path(project_dir, "data")
+out_dir = "/cwork/yx306/CorTree"
 out_rds <- file.path(out_dir, "AGP1_phylotree_fit.rds")
 out_pdf <- file.path(out_dir, "AGP1_phylotree_diagnostics.pdf")
 out_cov_assoc <- file.path(out_dir, "AGP1_cluster_covariate_association.csv")
@@ -15,15 +23,15 @@ count_data <- t(as.matrix(ag_obj$otu_top))
 keep_sample <- rownames(count_data)
 ag_cov <- ag_obj$ag_fecal
 
-n_clus <- 5L
+n_clus <- 10L
 init_Z <- ntile_base(rowSums(count_data), n_clus) - 1L
 
 tree_info <- aggregate_tree_counts(count_data, ag_obj$tree)
 tree_depth <- as.integer(max(tree_info$depth))
 
 cutoff_layer <- min(3L, tree_depth)
-burnin <- 20
-total_iter <- burnin + 20
+burnin <- 150
+total_iter <- burnin + 50
 warm_start <- 0
 c_sigma2_vec <- 3
 sigma_mu2 <- 0.5
@@ -44,9 +52,17 @@ fit <- PhyloTree_sampler(
   all_ind = all_ind,
   cov_interval = cov_interval
 )
+saveRDS(fit, file.path(out_dir, "AGP1_phylotree_fit.rds"))
 
 fit_size_gb <- as.numeric(object.size(fit)) / 1024^3; print(fit_size_gb)
 elapsed_min <- fit$elapsed / 60; print(elapsed_min)
+pi_trace_info <- get_pi_trace_plot_data(
+  fit = fit,
+  sampler_args = list(
+    total_iter = total_iter,
+    burnin = burnin
+  )
+)
 
 Z_post <- fit$mcmc$Z
 cluster_hat <- apply(Z_post, 1, function(z) {
@@ -119,7 +135,19 @@ pdf(out_pdf, width = 10, height = 8)
 layout(matrix(c(1, 2, 3, 3), nrow = 2, byrow = TRUE))
 par(mar = c(4, 4, 3, 1))
 plot(fit$mcmc$loglik, type = "l", xlab = "Iteration", ylab = "Log-likelihood", main = "PhyloTree log-likelihood")
-matplot(t(fit$mcmc$pi), type = "l", lty = 1, xlab = "Saved draw", ylab = "pi", main = "Mixture proportions")
+matplot(
+  x = pi_trace_info$iteration_index,
+  y = t(pi_trace_info$pi_chain),
+  type = "l",
+  lty = 1,
+  xlab = "MCMC iteration",
+  ylab = "pi",
+  main = if (identical(pi_trace_info$trace_source, "full")) {
+    "Mixture proportions (full trace)"
+  } else {
+    "Mixture proportions (saved trace)"
+  }
+)
 plot(
   umap_embedding[, 1],
   umap_embedding[, 2],
