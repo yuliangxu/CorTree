@@ -29,7 +29,8 @@ dnase_count_matrix <- dnase_count_matrix[, 1:(ncol(dnase_count_matrix) / 2)] +
   dnase_count_matrix[, (ncol(dnase_count_matrix) / 2 + 1):ncol(dnase_count_matrix)]
 
 threshold <- 50
-pwm_score_cutoff <- 13
+# pwm_score_cutoff <- 13
+pwm_score_cutoff <- 0
 idx_include <- which(
   rowSums(dnase_count_matrix) >= threshold &
     sites_chip_labels$pwm.score >= pwm_score_cutoff &
@@ -104,9 +105,12 @@ t_centipede <- system.time({
   centFit <- fitCentipede(
     Xlist = list(DNase = X),
     Y = cbind(1, pwm_score)
+    # Y = cbind(1, pwm_score, tss_dist)
   )
 })
 Z_centipede <- ifelse(centFit$PostPr > 0.5, 1L, 0L)
+
+adjusted_rand_index(chip_labels, Z_centipede)
 
 init_lookup <- list(
   rowsum_quantile = init_rowsum,
@@ -163,7 +167,12 @@ pi_trace <- extract_pi_trace(fit, burnin = burnin)
 pi_trace_indtree <- extract_pi_trace(fit_indtree, burnin = burnin)
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-file_tag <- sprintf("NRF1_task%02d_%s", task_id, init_mode)
+
+if(pwm_score_cutoff==0){
+  file_tag <- sprintf("pwm0_NRF1_task%02d_%s", task_id, init_mode)
+}else{
+  file_tag <- sprintf("NRF1_task%02d_%s", task_id, init_mode)
+}
 
 init_label <- paste0("Z_init (", init_mode, ")")
 summary_table <- data.frame(

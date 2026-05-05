@@ -7,7 +7,7 @@
 #SBATCH --output=/hpc/home/yx306/CorTree/out/out/REST_K_init_compare-%A_%a.out
 #SBATCH --partition=mastatlab
 #SBATCH --account=mastatlab
-#SBATCH --array=1-4
+#SBATCH --array=2,4
 
 module load R/4.4.0
 Rscript ./RDA/REST_K_init_compare.R "${SLURM_ARRAY_TASK_ID}" > ./out/REST_K_init_compare${SLURM_ARRAY_TASK_ID}.Rout 2>&1
