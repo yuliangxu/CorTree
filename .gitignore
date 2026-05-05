@@ -4,6 +4,7 @@ Rplots.pdf
 *.Rhistory
 *.RData
 *.Ruserdata
+*.slurm
 src/*.o
 src/*.so
 src/*.dll
