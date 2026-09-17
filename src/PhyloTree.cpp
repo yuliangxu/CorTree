@@ -690,7 +690,7 @@ public:
         }
       }
       // The paper's GHS diagonal prior is improper for an empty component.
-      // Retain its correlated precision; see the README correctness notes for this limitation.
+      // Retain its correlated precision; see docs/sampler-corrections.md for this limitation.
       // Proper independent variance priors can still be refreshed when n_k = 0.
       if (tree.idx_ind.n_elem > 0) {
         arma::mat residual = paras.phi(idx_k, tree.idx_ind);
