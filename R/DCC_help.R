@@ -32,19 +32,36 @@ quantile_groups <- function(x, k) {
 }
 
 postburnin_cols <- function(n_saved, burnin) {
-  start <- min(as.integer(burnin) + 1L, n_saved)
-  seq.int(start, n_saved)
+  if (length(n_saved) != 1L || length(burnin) != 1L ||
+      !is.finite(n_saved) || !is.finite(burnin) ||
+      n_saved != as.integer(n_saved) || burnin != as.integer(burnin) ||
+      n_saved < 1L || burnin < 0L || burnin >= n_saved) {
+    stop("Require integer 0 <= burnin < n_saved.")
+  }
+  seq.int(as.integer(burnin) + 1L, as.integer(n_saved))
 }
 
-hard_cluster_from_chain <- function(Z_chain, n_clus, burnin) {
-  keep_cols <- postburnin_cols(ncol(Z_chain), burnin)
-  Z_keep <- Z_chain[, keep_cols, drop = FALSE]
-  Z_hat <- as.integer(round(rowMeans(Z_keep)))
-  pmax(0L, pmin(as.integer(n_clus) - 1L, Z_hat))
+hard_cluster_from_chain <- function(Z_chain, n_clus, burnin = 0L,
+                                    includes_burnin = FALSE) {
+  # Both samplers already return post-burn-in Z. Keep the burnin argument
+  # for existing callers; only apply it to explicitly untrimmed chains.
+  Z_chain <- as.matrix(Z_chain)
+  if (anyNA(Z_chain) || any(!is.finite(Z_chain)) ||
+      any(Z_chain != floor(Z_chain)) || any(Z_chain < 0 | Z_chain >= n_clus)) {
+    stop("Z_chain must contain integer labels in 0, ..., n_clus - 1.")
+  }
+  keep <- postburnin_cols(ncol(Z_chain), if (includes_burnin) burnin else 0L)
+  # Select a sampled partition, invariant to label switching across draws.
+  dahl_clustering(Z_chain[, keep, drop = FALSE])$Z
 }
 
-extract_pi_trace <- function(fit, burnin) {
+extract_pi_trace <- function(fit, burnin = 0L) {
   pi_chain <- fit$mcmc$pi
+  n_draw <- ncol(fit$mcmc$Z)
+  if (ncol(pi_chain) == n_draw) return(pi_chain) # PhyloTree
+  if (ncol(pi_chain) - burnin != n_draw) {
+    stop("pi and Z draw counts do not agree with burnin.")
+  }
   keep_cols <- postburnin_cols(ncol(pi_chain), burnin)
   pi_chain[, keep_cols, drop = FALSE]
 }

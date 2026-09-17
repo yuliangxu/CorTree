@@ -1,6 +1,7 @@
 #include "PolyaGamma.h" // to sample polya-gamma random variable
 // [[Rcpp::depends(RcppArmadillo)]]
 #include <RcppArmadillo.h>
+#include "../inst/include/CorTree_types.h"
 #include <queue>
 #include <algorithm>
 #include <functional>
@@ -21,6 +22,11 @@
  //' @export
  // [[Rcpp::export]]
  Rcpp::List aggregate_tree_counts(arma::mat count_data, Rcpp::List tree) {
+  cortree::validate_counts(count_data);
+  if (!tree.containsElementNamed("edge") || !tree.containsElementNamed("Nnode") ||
+      !tree.containsElementNamed("tip.label")) {
+    Rcpp::stop("tree must contain edge, Nnode, and tip.label.");
+  }
   // Extract tree components using Armadillo types.
   arma::imat edge = Rcpp::as<arma::imat>(tree["edge"]); // two-column matrix: parent, child (1-indexed)
   int Nnode = Rcpp::as<int>(tree["Nnode"]);
@@ -28,6 +34,33 @@
   int n_tips = tip_label.size();
   int total_nodes = n_tips + Nnode;
   int n_samples = count_data.n_rows;
+  arma::mat edge_numeric = Rcpp::as<arma::mat>(tree["edge"]);
+  if (n_tips < 2 || Nnode != n_tips - 1 || count_data.n_cols != static_cast<arma::uword>(n_tips) ||
+      edge.n_cols != 2 || edge.n_rows != static_cast<arma::uword>(total_nodes - 1) ||
+      !edge_numeric.is_finite() || arma::any(arma::vectorise(edge_numeric) != arma::floor(arma::vectorise(edge_numeric))) ||
+      arma::any(arma::vectorise(edge) < 1) || arma::any(arma::vectorise(edge) > total_nodes)) {
+    Rcpp::stop("Require a rooted binary phylogeny with one count column per tip and valid node IDs.");
+  }
+  arma::ivec indegree(total_nodes, arma::fill::zeros);
+  arma::ivec outdegree(total_nodes, arma::fill::zeros);
+  for (arma::uword i = 0; i < edge.n_rows; ++i) {
+    ++outdegree(edge(i,0) - 1);
+    ++indegree(edge(i,1) - 1);
+  }
+  if (arma::accu(indegree == 0) != 1 || arma::any(indegree > 1) ||
+      arma::any(outdegree.head(n_tips) != 0) || arma::any(outdegree.tail(Nnode) != 2)) {
+    Rcpp::stop("tree must be rooted and binary, with each non-root node having one parent.");
+  }
+  arma::uvec roots = arma::find(indegree == 0);
+  std::queue<int> pending;
+  pending.push(static_cast<int>(roots(0)) + 1);
+  int visited = 0;
+  while (!pending.empty()) {
+    int node = pending.front(); pending.pop(); ++visited;
+    for (arma::uword i = 0; i < edge.n_rows; ++i)
+      if (edge(i,0) == node) pending.push(edge(i,1));
+  }
+  if (visited != total_nodes) Rcpp::stop("tree must be connected and acyclic.");
   
   // Create an aggregated count matrix.
   // For tip nodes (columns 0 to n_tips-1) we use the original count_data.
@@ -194,9 +227,11 @@ private:
     int total_nodes; // total number of nodes, = 2^{m+1}-1
     int total_parents; // total number of parents, = 2^m-1, also the total number of phi
     arma::mat count; // X_i(A_eps), n by total_nodes matrix, count table 
+    arma::mat parent_count;
     arma::mat kappa; // n(A) - n(A_p)/2, n by total_parents matrix
 
     arma::vec ind_layer_idx;
+    arma::vec cor_layer_idx;
   } tree; // fixed tree structure
   
   struct TreeLatentParameters{
@@ -265,6 +300,8 @@ private:
   
 public:
   
+  arma::uvec covariance_regularizations;
+  arma::uvec covariance_updates_skipped;
   int iter=0;
   std::vector<GHS_params> ghs_list;
   Rcpp::List test_output;
@@ -281,6 +318,8 @@ public:
   void load_data(arma::mat X, int n_clus){
     dat.X = X;
     dat.n_clus = n_clus;
+    covariance_regularizations.zeros(n_clus);
+    covariance_updates_skipped.zeros(n_clus);
     dat.n = X.n_rows;
   };
 
@@ -366,17 +405,20 @@ public:
     tree.count = aggregated;
 
     // initialize kappa as n(A) - n(A_p)/2, columns are ordered the same way as the nodes
+    tree.parent_count.set_size(dat.n, tree.total_parents);
     tree.kappa = arma::zeros<arma::mat>(dat.n, tree.total_parents);
     arma::uvec all_children = tree.edge.col(1);
     for(arma::uword j=0; j<tree.total_parents; j++){
       arma::uvec col_parent = find(tree.nodes == tree.parent_nodes(j));
       arma::uvec children = all_children(find(tree.edge.col(0) == tree.parent_nodes(j)));
       arma::uvec col_1st_child = find(tree.nodes == children(0));
+      tree.parent_count.col(j) = tree.count.col(col_parent(0));
       tree.kappa.col(j) = tree.count.col(col_1st_child(0)) - tree.count.col(col_parent(0))/2;
     }
 
     // change this to be phylo-tree's layer
-    tree.ind_layer_idx = parent_depth.elem(tree.idx_ind);
+    tree.ind_layer_idx = 1.0 + parent_depth.elem(tree.idx_ind);
+    tree.cor_layer_idx = 1.0 + parent_depth.elem(tree.idx_cor);
     
 
   }; 
@@ -384,6 +426,7 @@ public:
   void set_test_output(){
     test_output = Rcpp::List::create(Rcpp::Named("count") = tree.count,
                                      Rcpp::Named("depth") = tree.m,
+                                     Rcpp::Named("parent_count") = tree.parent_count,
                                      Rcpp::Named("tree.idx_ind") = tree.idx_ind,
                                      Rcpp::Named("tree.idx_cor") = tree.idx_cor,
                                      Rcpp::Named("ind_layer_idx") = tree.ind_layer_idx,
@@ -403,7 +446,7 @@ public:
 
   void initialize_parameters(arma::uvec init_Z){
     paras.mu = arma::zeros<arma::mat>(tree.total_parents, dat.n_clus);
-    paras.Z_cor_status = arma::ones<arma::uvec>(dat.n);
+    paras.Z_cor_status = arma::ones<arma::uvec>(dat.n_clus);
     // Assuming tree.L is the dimension of the identity matrix and tree.total_slices is the number of slices
 
     if(all_ind){
@@ -443,7 +486,7 @@ public:
     
     // #pragma omp parallel for
     for(int i = 0; i < dat.X.n_rows; i++){
-      arma::rowvec b_i = tree.count.row(i).cols(0, tree.total_parents-1);
+      arma::rowvec b_i = tree.parent_count.row(i);
       // Old wrong code: indexed phi by cluster label instead of sample index.
       // arma::rowvec c_i = paras.phi.row(paras.Z(i));
       arma::rowvec c_i = paras.phi.row(i);
@@ -494,8 +537,7 @@ public:
       phi_i(tree.idx_ind) = post_mu2 +
         sqrt(post_sigma2) % arma::randn<arma::vec>(post_mu2.n_elem);
 
-      // to avoid numerical issue, phi_i cannot be larger than 10
-      phi_i.clamp( -7.0, 7.0);
+      // Draw from the Gaussian full conditional without clipping.
 
       paras.phi.row(i) = phi_i.t();
     }
@@ -506,7 +548,7 @@ public:
     // #pragma omp parallel for
     for(arma::uword k=0; k<dat.n_clus; k++){
       arma::uvec idx_k = arma::find(paras.Z == k);
-      if(idx_k.n_elem > 0){
+      {
         // correlated
         if(!all_ind){
           arma::mat post_Sigma_inv = idx_k.n_elem * paras.Sigma_inv.slice(k);
@@ -535,34 +577,17 @@ public:
   void GHS_oneSample(const arma::mat& S, int n,
                    GHS_params& params) {
     int p = S.n_rows;
-
-    // arma::mat cholDecomp;
-    // bool pd_check = arma::chol(cholDecomp, params.Omega);
-    arma::mat Omega_old = params.Omega;
-    // bool S_pd_check = arma::chol(cholDecomp, S);
-    // Rcout<<"begin of GHS_oneSample"<<std::endl;
-    // Rcout<<"is S pd?"<<S_pd_check<<std::endl;
-    // Rcout<<"is Omega pd?"<<pd_check<<std::endl;
-
-    // Indices for columns
-  arma::mat ind_all(p - 1, p, arma::fill::zeros);
-  for (int i = 0; i < p; ++i) {
-    if (i == 0) {
-      ind_all.col(i) = arma::regspace(1, p - 1);
-    } else if (i == p - 1) {
-      ind_all.col(i) = arma::regspace(0, p - 2);
-    } else {
-      arma::uvec inds = arma::regspace<arma::uvec>(0, p - 1);
-      inds.shed_row(i);
-      ind_all.col(i) = arma::conv_to<arma::vec>::from(inds);
+    if (n < 1 || p < 1 || !S.is_finite() || arma::any(S.diag() <= 0.0))
+      Rcpp::stop("GHS update requires a nonempty cluster with positive residual sums of squares.");
+    if (p == 1) {
+      params.Omega(0,0) = R::rgamma(n / 2.0 + 1.0, 2.0 / S(0,0));
+      params.Sigma(0,0) = 1.0 / params.Omega(0,0);
+      return;
     }
-  }
-  
-    
-    // Sample Sigma and Omega = inv(Sigma)
-    for (arma::uword i = 0; i < p; ++i) {
-      arma::uvec ind = arma::conv_to<arma::uvec>::from(ind_all.col(i));
-      
+
+    for (arma::uword i = 0; i < static_cast<arma::uword>(p); ++i) {
+      arma::uvec ind = arma::regspace<arma::uvec>(0, p - 1);
+      ind.shed_row(i);
       // Extract submatrices using proper matrix subsetting
       arma::mat Sigma_11 = params.Sigma(ind, ind);             // Sigma_11
       arma::vec sigma_12 = params.Sigma(ind, arma::uvec{i});    // Sigma_12
@@ -580,8 +605,12 @@ public:
       
       arma::mat inv_C = s_22 * inv_Omega_11 + arma::diagmat(1.0 / (lambda_sq_12 * params.tau_sq));
       arma::mat inv_C_chol = arma::chol(inv_C);
-      arma::vec mu_i = -arma::solve(inv_C, s_21);
-      arma::vec beta = mu_i + arma::solve(inv_C_chol, arma::randn(p - 1));
+      // Reuse the Cholesky factor for the mean as well as the noise.
+      // A generic solve can silently substitute a pseudoinverse for an
+      // ill-conditioned SPD matrix, changing this Gaussian conditional.
+      arma::vec rhs = arma::solve(arma::trimatl(inv_C_chol.t()), s_21, arma::solve_opts::fast);
+      arma::vec mu_i = -arma::solve(arma::trimatu(inv_C_chol), rhs, arma::solve_opts::fast);
+      arma::vec beta = mu_i + arma::solve(arma::trimatu(inv_C_chol), arma::randn(p - 1), arma::solve_opts::fast);
       arma::vec omega_12 = beta;
       double omega_22 = gamma + arma::as_scalar(beta.t() * inv_Omega_11 * beta);
       
@@ -590,9 +619,7 @@ public:
       arma::mat inv_lambda_sq_12 = arma::randg<arma::vec>(rate.n_elem, arma::distr_param(1.0,1.0)); 
       inv_lambda_sq_12 /= rate;
       lambda_sq_12 = 1.0 / inv_lambda_sq_12;
-      nu_12 = arma::randg<arma::vec>(nu_12.n_elem, arma::distr_param(1.0,1.0));
-      nu_12 /= lambda_sq_12;
-      nu_12 = 1.0 / nu_12;
+      nu_12 = cortree::horseshoe_nu(lambda_sq_12);
 
       // Store omega_12 and omega_22 in Omega matrix
       params.Omega(arma::uvec{i}, ind) = omega_12.t();
@@ -630,93 +657,50 @@ public:
 
   
   void update_Sigma(){
-    // consider a warm start using independent state
-    for(arma::uword k=0; k<dat.n_clus; k++){
+    for (arma::uword k = 0; k < static_cast<arma::uword>(dat.n_clus); ++k) {
       arma::uvec idx_k = arma::find(paras.Z == k);
-      if(idx_k.n_elem > 0){
-        if(!all_ind){
-          if(iter < warm_start || paras.Z_cor_status(k) == 0){
-            
-            // update sigma_vec
-            arma::vec layer_idx = floor( log2(2+arma::regspace<arma::vec>(0, tree.L - 1)) );
-            arma::vec a_vec = layer_idx* hyper.c_sigma2_vec + idx_k.n_elem/2;
-            arma::mat phi_res = paras.phi(idx_k,tree.idx_cor);
-            phi_res.each_row() -= paras.mu(tree.idx_cor, arma::uvec{k}).t();
-            arma::vec b_vec = layer_idx + arma::trans(arma::sum(phi_res%phi_res, 0)/2);  
-            
-            arma::vec gamma1(a_vec.n_elem);
-            arma::vec gamma2(b_vec.n_elem);
-            for (arma::uword i = 0; i < a_vec.n_elem; ++i) {
-              gamma1(i) = arma::randg(arma::distr_param(a_vec(i), 1.0));  // generate gamma random values
-              gamma2(i) = arma::randg(arma::distr_param(b_vec(i), 1.0));
-            }
-            arma::vec sigma2_k_vec = (gamma1 + gamma2)/gamma1;
-            
-            
-            paras.Sigma_inv.slice(k) = arma::diagmat(sigma2_k_vec);
-            
-            
-          }else if(arma::det(paras.Sigma_inv.slice(k)) < 1e200){
-            
-            arma::mat phi_centered = paras.phi(idx_k, tree.idx_cor);
-            phi_centered.each_row() -= paras.mu(tree.idx_cor, arma::uvec{k}).t();
-            // arma::rowvec phi_mean = arma::mean(phi_centered, 0);
-            // phi_centered.each_row() -= phi_mean;
-            arma::mat phi_centered_Cov = phi_centered.t() * phi_centered;
-            GHS_oneSample(phi_centered_Cov, idx_k.n_elem, ghs_list[k]);
-            paras.tau_sq_GHS(k) = ghs_list[k].tau_sq;
-            // check if Omega is symmetric positive definite
-            
-            paras.Sigma_inv.slice(k) = ghs_list[k].Omega;
-            
-            // avoids singular updates
-            if(arma::det(paras.Sigma_inv.slice(k)) > 1e150){
-              // Eigen-value regularization
-              Rcout<<"Eigen-value regularization: adding a small pertubation "<<hyper.err_precision<<" to "<<k<<"-th covariance"<<std::endl;
-              // Eigen decomposition of Sigma
-              arma::vec eigvals;
-              arma::mat eigvecs;
-              eig_sym(eigvals, eigvecs, paras.Sigma_inv.slice(k));
-              eigvals = 1.0/eigvals + hyper.err_precision;  // Add epsilon to each eigenvalue
-              arma::vec eigvals_inv = 1.0 / eigvals;
-              paras.Sigma_inv.slice(k) = eigvecs * diagmat(eigvals_inv) * eigvecs.t();
-              Rcout<<" arma::det(paras.Sigma_inv.slice(k)) ="<<arma::det(paras.Sigma_inv.slice(k)) <<std::endl;
-            }
-            // paras.Sigma_inv.slice(k).diag() += hyper.err_precision*arma::ones(tree.L); // to prevent singularity
-            
-            // double prop_k = idx_k.n_elem/dat.n;
-            // if( idx_k.n_elem < 30){
-            //   Rcout<<"make cov ind: counts of idx_"<<k<<" is "<<idx_k.n_elem<<"; idx_k.n_elem="<<idx_k.n_elem <<std::endl;
-            //   paras.Z_cor_status(k) = 0;
-            // }
-            
-            if(iter % cov_interval == 0){
-              Rcout<<"---update_Sigma::det of Sigma_inv["<<k<<"]="<<arma::det(paras.Sigma_inv.slice(k))<<std::endl;
-            }
+      if (!all_ind && idx_k.n_elem > 0) {
+        arma::mat residual = paras.phi(idx_k, tree.idx_cor);
+        residual.each_row() -= paras.mu(tree.idx_cor, arma::uvec{k}).t();
+        if (iter < warm_start) {
+          arma::vec variance = cortree::independent_variance(
+            residual, tree.cor_layer_idx, hyper.c_sigma2_vec);
+          paras.Sigma_inv.slice(k) = arma::diagmat(1.0 / variance);
+          // Keep the block sampler's inverse pair consistent across warm-up.
+          ghs_list[k].Omega = paras.Sigma_inv.slice(k);
+          ghs_list[k].Sigma = arma::diagmat(variance);
+        } else if (cortree::update_precision_allowed(paras.Sigma_inv.slice(k))) {
+          arma::mat scatter = residual.t() * residual;
+          GHS_oneSample(scatter, static_cast<int>(idx_k.n_elem), ghs_list[k]);
+          paras.Sigma_inv.slice(k) = ghs_list[k].Omega;
+          paras.tau_sq_GHS(k) = ghs_list[k].tau_sq;
+          // Restore the original covariance ridge once det(precision) > 1e150.
+          arma::mat precision = paras.Sigma_inv.slice(k);
+          arma::mat covariance;
+          if (cortree::regularize_precision(precision, covariance, hyper.err_precision)) {
+            paras.Sigma_inv.slice(k) = precision;
+            // The next GHS sweep must start from this same inverse pair.
+            ghs_list[k].Omega = precision;
+            ghs_list[k].Sigma = covariance;
+            ++covariance_regularizations(k);
           }
-          
-          
+        } else {
+          // Original freeze threshold: leave correlated covariance unchanged.
+          ++covariance_updates_skipped(k);
         }
-        
-        // update sigma_vec
-        arma::vec a_vec = tree.ind_layer_idx * hyper.c_sigma2_vec + idx_k.n_elem/2;
-        arma::mat phi_res = paras.phi(idx_k,tree.idx_ind);
-        phi_res.each_row() -= paras.mu(tree.idx_ind, arma::uvec{k}).t();
-        arma::vec b_vec = tree.ind_layer_idx + arma::trans(arma::sum(phi_res%phi_res, 0)/2);  
-        
-        arma::vec gamma1(a_vec.n_elem);
-        arma::vec gamma2(b_vec.n_elem);
-        for (arma::uword i = 0; i < a_vec.n_elem; ++i) {
-          gamma1(i) = arma::randg(arma::distr_param(a_vec(i), 1.0));  // generate gamma random values
-          gamma2(i) = arma::randg(arma::distr_param(b_vec(i), 1.0));
-        }
-        paras.sigma2_vec.col(k) = (gamma1 + gamma2)/gamma1;
       }
-      
+      // The paper's GHS diagonal prior is improper for an empty component.
+      // Retain its correlated precision; see the README correctness notes for this limitation.
+      // Proper independent variance priors can still be refreshed when n_k = 0.
+      if (tree.idx_ind.n_elem > 0) {
+        arma::mat residual = paras.phi(idx_k, tree.idx_ind);
+        residual.each_row() -= paras.mu(tree.idx_ind, arma::uvec{k}).t();
+        paras.sigma2_vec.col(k) = cortree::independent_variance(
+          residual, tree.ind_layer_idx, hyper.c_sigma2_vec);
+      }
     }
-    
-  };// Graphical Horseshoe prior
-  
+  };
+
   void update_Z(){ 
     // #pragma omp parallel for
     for(arma::uword i=0; i<dat.n; i++){
@@ -807,33 +791,20 @@ public:
   };
   
   void update_pi(){
-    // stick-breaking weights
-    arma::uvec Z_count =  arma::hist(paras.Z, arma::regspace<arma::uvec>(0, dat.n_clus-1));
-    arma::vec beta_a = 1.0 + arma::conv_to<arma::vec>::from(Z_count);
-    arma::vec beta_b = paras.alpha + arma::cumsum(arma::reverse(beta_a));
-    beta_b = arma::reverse(beta_b);
-    beta_b = beta_b.subvec(1, beta_b.n_elem - 1);
-    beta_a = beta_a.subvec(0, beta_a.n_elem - 2);
-    
-    arma::vec gamma1(beta_a.n_elem);
-    arma::vec gamma2(beta_b.n_elem);
-    for (arma::uword i = 0; i < beta_a.n_elem; ++i) {
-      gamma1(i) = arma::randg(arma::distr_param(beta_a(i), 1.0));  // generate gamma random values
-      gamma2(i) = arma::randg(arma::distr_param(beta_b(i), 1.0));
-    }
-    arma::vec V = gamma1/(gamma2+gamma1);
-    paras.pi(0) = V(0);
-    for(int k=1; k<dat.n_clus-1; k++){
-      paras.pi(k) = V(k) * arma::prod(1 - V.subvec(0, k-1));
-    }
-    paras.pi(dat.n_clus-1) = 1 - arma::sum(paras.pi.subvec(0, dat.n_clus-2));
-  }; // Dirichlet process mixture prior
-  
+    arma::uvec counts(dat.n_clus, arma::fill::zeros);
+    for (arma::uword i = 0; i < paras.Z.n_elem; ++i) ++counts(paras.Z(i));
+    paras.pi = cortree::stick_weights(counts, paras.alpha);
+  };
+
   void update_loglike(){
-    arma::mat n_left_child = tree.kappa + tree.count.cols(0,tree.total_parents-1)/2;
-    arma::mat V = 1.0/(1.0 + arma::exp(-paras.phi));
-    arma::mat loglike_mat = n_left_child % arma::log(V) + (tree.count.cols(0,tree.total_parents-1) - n_left_child) % arma::log(1.0-V);
-    paras.loglike = arma::accu(loglike_mat);
+    const arma::mat parent_count = tree.parent_count;
+    paras.loglike = 0.0;
+    for (arma::uword i = 0; i < parent_count.n_rows; ++i) {
+      for (arma::uword j = 0; j < parent_count.n_cols; ++j) {
+        double n = parent_count(i,j);
+        paras.loglike += cortree::binomial_log_kernel(n, tree.kappa(i,j) + n / 2.0, paras.phi(i,j));
+      }
+    }
 
     if(save_cluster_cor_trace){
       arma::umat indicator_matrix(dat.n, dat.n, arma::fill::zeros);
@@ -846,6 +817,7 @@ public:
   
   void run_gibbs(){
     for(iter=0; iter<gibbs_control.total_iter; iter++){
+      Rcpp::checkUserInterrupt();
       update_omega();
       update_phi();
       update_mu();
@@ -910,7 +882,13 @@ public:
                               Rcpp::Named("pi_full") = paras_sample.pi_full_sample,
                               Rcpp::Named("pi") = paras_sample.pi_sample,
                               Rcpp::Named("Z") = paras_sample.Z_sample,
-                              Rcpp::Named("loglik") = paras_sample.loglik);
+                              Rcpp::Named("loglik") = paras_sample.loglik,
+                              Rcpp::Named("covariance_safeguards") = Rcpp::List::create(
+                                Rcpp::Named("regularizations") = covariance_regularizations,
+                                Rcpp::Named("updates_skipped") = covariance_updates_skipped,
+                                Rcpp::Named("epsilon") = hyper.err_precision,
+                                Rcpp::Named("regularize_logdet_threshold") = std::log(1e150),
+                                Rcpp::Named("freeze_logdet_threshold") = std::log(1e200)));
   };
   
   
@@ -931,9 +909,12 @@ Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree,
   Rcout<<"begin PhyloTree_sampler"<<std::endl;
   arma::wall_clock timer;
   timer.tic();
+  cortree::validate_sampler(count_data, n_clus, total_iter, burnin, warm_start,
+                            cov_interval, c_sigma2_vec, sigma_mu2, init_Z);
+  if (cutoff_layer < 0) Rcpp::stop("cutoff_layer must be nonnegative.");
   PhyloTree model;
 
-  if(init_Z.n_elem == 1){
+  if(init_Z.n_elem == 1 && count_data.n_rows > 1){
     init_Z = arma::randi<arma::uvec>(count_data.n_rows, arma::distr_param(0, n_clus-1));
   }
   

@@ -106,7 +106,7 @@ CorTree_sampler_randominit <- function(
     z_chain_s <- fit_s$mcmc$Z
     if (!is.null(z_chain_s) && ncol(z_chain_s) >= 1L) {
       z_burnin_end <- as.integer(z_chain_s[, 1L])
-      collapsed_s <- length(unique(z_burnin_end)) <= 1L
+      collapsed_s <- n_clus > 1L && length(unique(z_burnin_end)) <= 1L
       collapsed_at_burnin[s] <- collapsed_s
       if (isTRUE(discard_collapsed_at_burnin) && collapsed_s) {
         if (isTRUE(verbose)) {

@@ -2,11 +2,13 @@ construct_tree <- function(X, tree_depth) {
   if (!is.matrix(X)) {
     X <- as.matrix(X)
   }
-  if (!is.numeric(X)) {
-    stop("`X` must be a numeric matrix.")
+  if (!is.numeric(X) || nrow(X) < 1L || ncol(X) < 1L ||
+      any(!is.finite(X)) || any(X < 0) || any(X != floor(X))) {
+    stop("`X` must be a nonempty matrix of finite nonnegative integer counts.")
   }
-  if (length(tree_depth) != 1L || !is.finite(tree_depth) || tree_depth < 1) {
-    stop("`tree_depth` must be a positive scalar.")
+  if (length(tree_depth) != 1L || !is.finite(tree_depth) ||
+      tree_depth != floor(tree_depth) || tree_depth < 1 || tree_depth > 20) {
+    stop("`tree_depth` must be an integer between 1 and 20.")
   }
 
   m <- as.integer(tree_depth)

@@ -764,3 +764,46 @@ cluster_average = function(X,Z, y_upper_lim=NULL){
   
   
 }
+
+
+# Dahl clustering summary from MCMC membership draws
+# Z_samples: n x S matrix, each column is one MCMC draw of cluster labels
+dahl_clustering <- function(Z_samples, return_P = FALSE) {
+  Z_samples <- as.matrix(Z_samples)
+  if (ncol(Z_samples) < 1L) {
+    stop("`Z_samples` must have at least one MCMC draw (one column).")
+  }
+  if (anyNA(Z_samples)) {
+    stop("`Z_samples` contains NA values; please remove/impute before Dahl clustering.")
+  }
+
+  n <- nrow(Z_samples)
+  S <- ncol(Z_samples)
+
+  P <- matrix(0, nrow = n, ncol = n)
+  for (s in seq_len(S)) {
+    z_s <- Z_samples[, s]
+    P <- P + outer(z_s, z_s, FUN = "==")
+  }
+  P <- P / S
+  diag(P) <- 1
+
+  loss <- numeric(S)
+  for (s in seq_len(S)) {
+    A_s <- outer(Z_samples[, s], Z_samples[, s], FUN = "==")
+    loss[s] <- sum((A_s - P)^2)
+  }
+
+  best_iter <- which.min(loss)
+  Z_dahl <- as.integer(Z_samples[, best_iter])
+
+  out <- list(
+    Z = Z_dahl,
+    best_iter = best_iter,
+    loss = loss
+  )
+  if (isTRUE(return_P)) {
+    out$P <- P
+  }
+  out
+}

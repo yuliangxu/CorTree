@@ -1,4 +1,5 @@
 #include <RcppArmadillo.h>
+#include "../inst/include/CorTree_types.h"
 // [[Rcpp::depends(RcppArmadillo)]]
 
 namespace {
@@ -80,9 +81,7 @@ double log_tree_lik_from_phi(const arma::rowvec& count_parent,
     double n = count_parent(j);
     double y = kappa(j) + 0.5 * n;
     double phi_j = phi(j);
-    double logp = -std::log1p(std::exp(-phi_j));
-    double log1mp = -std::log1p(std::exp(phi_j));
-    out += log_binom_term(n, y) + y * logp + (n - y) * log1mp;
+    out += log_binom_term(n, y) + cortree::binomial_log_kernel(n, y, phi_j);
   }
   return out;
 }
@@ -109,7 +108,6 @@ arma::vec sample_phi_cluster(const arma::vec& mu_k,
       mu_k.subvec(ind_start, mu_k.n_elem - 1) + arma::sqrt(sigma2_k) % z_ind;
   }
 
-  phi.clamp(-7.0, 7.0);
   return phi;
 }
 
@@ -123,6 +121,9 @@ Rcpp::List CorTree_heldout_logpred(const arma::mat& X_test,
                                    int burnin = 0,
                                    bool all_ind = false,
                                    int n_phi_mc = 1) {
+  cortree::validate_counts(X_test);
+  cortree::validate_depth(tree_depth, cutoff_layer, all_ind);
+  if (burnin < 0) Rcpp::stop("burnin must be nonnegative.");
   if (n_phi_mc <= 0) {
     Rcpp::stop("`n_phi_mc` must be positive.");
   }
@@ -137,6 +138,10 @@ Rcpp::List CorTree_heldout_logpred(const arma::mat& X_test,
   arma::uword n_test = X_test.n_rows;
   arma::uword L = all_ind ? 0 : static_cast<arma::uword>(std::pow(2.0, cutoff_layer + 1.0) - 1.0);
 
+  if (n_draw == 0 || n_clus == 0 || total_parents != static_cast<arma::uword>(std::pow(2.0, tree_depth) - 1) ||
+      sigma2_vec.n_rows != total_parents - L || sigma2_vec.n_cols != n_clus) {
+    Rcpp::stop("MCMC dimensions do not match the requested tree configuration.");
+  }
   if (sigma2_vec.n_slices != n_draw) {
     Rcpp::stop("Mismatch: `sigma2_vec` and `mu` have different draw counts.");
   }
@@ -229,6 +234,9 @@ Rcpp::List CorTree_heldout_membership(const arma::mat& X_test,
                                       int burnin = 0,
                                       bool all_ind = false,
                                       int n_phi_mc = 1) {
+  cortree::validate_counts(X_test);
+  cortree::validate_depth(tree_depth, cutoff_layer, all_ind);
+  if (burnin < 0) Rcpp::stop("burnin must be nonnegative.");
   if (n_phi_mc <= 0) {
     Rcpp::stop("`n_phi_mc` must be positive.");
   }
@@ -243,6 +251,10 @@ Rcpp::List CorTree_heldout_membership(const arma::mat& X_test,
   arma::uword n_test = X_test.n_rows;
   arma::uword L = all_ind ? 0 : static_cast<arma::uword>(std::pow(2.0, cutoff_layer + 1.0) - 1.0);
 
+  if (n_draw == 0 || n_clus == 0 || total_parents != static_cast<arma::uword>(std::pow(2.0, tree_depth) - 1) ||
+      sigma2_vec.n_rows != total_parents - L || sigma2_vec.n_cols != n_clus) {
+    Rcpp::stop("MCMC dimensions do not match the requested tree configuration.");
+  }
   if (sigma2_vec.n_slices != n_draw) {
     Rcpp::stop("Mismatch: `sigma2_vec` and `mu` have different draw counts.");
   }
