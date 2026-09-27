@@ -12,4 +12,13 @@ src/*.dll
 /data/
 /out/
 
+# Local research artifacts and credentials/configuration are not publication inputs.
+/.local-backups/
+/.codex
+/.vscode/
+/.r_plot_config.json
+/private-results/
+/private-figures/
+__pycache__/
+
 /data/

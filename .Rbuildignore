@@ -1,2 +1,9 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^reproduction$
+^\.local-backups$
+^\.codex$
+^\.vscode$
+^\.r_plot_config\.json$
+^private-results$
+^private-figures$

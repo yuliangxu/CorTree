@@ -30,6 +30,8 @@ The main idea is to represent high-dimensional counts through binary tree splits
 
 See the [precision-prior comparison](docs/sampler-corrections.md) for prior definitions, simulation and DNase-seq results, comparisons with the published paper, and the remaining convergence limitations.
 
+The [reproduction scripts](reproduction/ghs/README.md) regenerate the simulation comparisons and run DNase fits with separately supplied data. The [prior API](docs/precision-prior-api.md) documents the proper-prior controls available in both samplers and fitting wrappers. Store generated figures and fitted objects outside this repository.
+
 ## What Is In This Repository
 
 ```text

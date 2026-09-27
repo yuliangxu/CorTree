@@ -8,7 +8,7 @@ This report compares five CorTree versions and the paper's competing methods. **
 
 ## 1. Prior settings
 
-The public package retains its flat-prior sampler. The proper alternatives reported here were evaluated in separate research builds; this documentation update does not add those options to the package API.
+The package implements the proper alternatives reported here while retaining flat GHS as the default for compatibility. See the [prior API](precision-prior-api.md) for explicit settings and the [reproduction guide](../reproduction/ghs/README.md) for portable simulation and DNase scripts. Published paper rows remain historical references, not outputs of the corrected sampler.
 
 Let $\Omega=\Sigma^{-1}$ be a component's latent-logit precision matrix. Each prior has joint kernel $\mathbf{1}_{\{\Omega\succ0\}}w(\Omega)H(\Omega,\lambda,\tau)$, where $H$ contains zero-mean Gaussian off-diagonal factors with variance $\lambda_{ij}^2\tau^2$ and standard half-Cauchy local/global scales. The table specifies the remaining factor.
 

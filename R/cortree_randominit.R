@@ -1,3 +1,11 @@
+# Positive ghs_jmlr_lambda selects the JMLR fixed common scale (rate=lambda/2, tau=1/lambda).
+# ghs_diag_rate > 0 selects a proper joint GHS prior with exponential diagonal
+# factors; finite ghs_diag_upper with rate 0 selects bounded uniform factors.
+# Infinite upper with rate 0 preserves legacy flat diagonals. Bounded correlated
+# fits require warm_start = 0. Prior options pass unchanged to every start.
+# Positive ghs_det_df with a positive rate and infinite upper gives determinant-
+# trace GHS. ghs_scale_hierarchy additionally fits Omega_k = t_k Q_k and a shared
+# Gamma rate; the rate and determinant controls then specify the fixed Q prior.
 CorTree_sampler_randominit <- function(
   X,
   n_clus,
@@ -15,7 +23,15 @@ CorTree_sampler_randominit <- function(
   save_phi_trace = TRUE,
   save_cluster_cor_trace = TRUE,
   discard_collapsed_at_burnin = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  ghs_diag_rate = 0.0,
+  ghs_diag_upper = Inf,
+  ghs_jmlr_lambda = 0.0,
+  ghs_det_df = 0.0,
+  ghs_scale_hierarchy = FALSE,
+  ghs_scale_shape = 3.0,
+  ghs_scale_rate_shape = 2.0,
+  ghs_scale_rate_rate = 1.0
 ) {
   n_start <- as.integer(n_start)
   if (is.na(n_start) || n_start <= 0L) {
@@ -96,7 +112,15 @@ CorTree_sampler_randominit <- function(
       all_ind = all_ind,
       cov_interval = cov_interval,
       save_phi_trace = save_phi_trace,
-      save_cluster_cor_trace = save_cluster_cor_trace
+      save_cluster_cor_trace = save_cluster_cor_trace,
+      ghs_diag_rate = ghs_diag_rate,
+      ghs_diag_upper = ghs_diag_upper,
+      ghs_jmlr_lambda = ghs_jmlr_lambda,
+      ghs_det_df = ghs_det_df,
+      ghs_scale_hierarchy = ghs_scale_hierarchy,
+      ghs_scale_shape = ghs_scale_shape,
+      ghs_scale_rate_shape = ghs_scale_rate_shape,
+      ghs_scale_rate_rate = ghs_scale_rate_rate
     )
 
     fit_list[[s]] <- fit_s

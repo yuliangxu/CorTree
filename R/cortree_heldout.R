@@ -1,3 +1,7 @@
+# Positive ghs_jmlr_lambda selects the JMLR fixed common scale (rate=lambda/2, tau=1/lambda).
+# ghs_diag_rate and ghs_diag_upper are forwarded to training and full refitting.
+# Determinant-trace and shared-scale hierarchy controls are also forwarded to
+# every training start and the selected full-data refit without modification.
 CorTree_sampler_randominit_heldout <- function(
   X,
   train_idx,
@@ -19,7 +23,15 @@ CorTree_sampler_randominit_heldout <- function(
   n_phi_mc = 1L,
   discard_collapsed_at_burnin = TRUE,
   refit_full_data = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  ghs_diag_rate = 0.0,
+  ghs_diag_upper = Inf,
+  ghs_jmlr_lambda = 0.0,
+  ghs_det_df = 0.0,
+  ghs_scale_hierarchy = FALSE,
+  ghs_scale_shape = 3.0,
+  ghs_scale_rate_shape = 2.0,
+  ghs_scale_rate_rate = 1.0
 ) {
   n_start <- as.integer(n_start)
   if (is.na(n_start) || n_start <= 0L) {
@@ -117,7 +129,15 @@ CorTree_sampler_randominit_heldout <- function(
     save_phi_trace = save_phi_trace,
     save_cluster_cor_trace = save_cluster_cor_trace,
     discard_collapsed_at_burnin = discard_collapsed_at_burnin,
-    verbose = verbose
+    verbose = verbose,
+    ghs_diag_rate = ghs_diag_rate,
+    ghs_diag_upper = ghs_diag_upper,
+    ghs_jmlr_lambda = ghs_jmlr_lambda,
+    ghs_det_df = ghs_det_df,
+    ghs_scale_hierarchy = ghs_scale_hierarchy,
+    ghs_scale_shape = ghs_scale_shape,
+    ghs_scale_rate_shape = ghs_scale_rate_shape,
+    ghs_scale_rate_rate = ghs_scale_rate_rate
   )
 
   hlpd_by_start <- rep(NA_real_, length(fit_multi$all_fit))
@@ -182,7 +202,15 @@ CorTree_sampler_randominit_heldout <- function(
         all_ind = all_ind,
         cov_interval = cov_interval,
         save_phi_trace = save_phi_trace,
-        save_cluster_cor_trace = save_cluster_cor_trace
+        save_cluster_cor_trace = save_cluster_cor_trace,
+        ghs_diag_rate = ghs_diag_rate,
+        ghs_diag_upper = ghs_diag_upper,
+        ghs_jmlr_lambda = ghs_jmlr_lambda,
+        ghs_det_df = ghs_det_df,
+        ghs_scale_hierarchy = ghs_scale_hierarchy,
+        ghs_scale_shape = ghs_scale_shape,
+        ghs_scale_rate_shape = ghs_scale_rate_shape,
+        ghs_scale_rate_rate = ghs_scale_rate_rate
       )
     })
     full_fit_elapsed <- unname(t_full[["elapsed"]])

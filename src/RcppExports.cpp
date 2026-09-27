@@ -2,6 +2,7 @@
 // Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 #include "../inst/include/CorTree_types.h"
+#include <RcppArmadillo.h>
 #include <Rcpp.h>
 
 using namespace Rcpp;
@@ -12,8 +13,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // CorTree_sampler
-Rcpp::List CorTree_sampler(arma::mat X, int n_clus, int tree_depth, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval, bool save_phi_trace, bool save_cluster_cor_trace, double z_det_gamma0, int z_mode, bool z_det_gamma_linear);
-RcppExport SEXP _CorTree_CorTree_sampler(SEXP XSEXP, SEXP n_clusSEXP, SEXP tree_depthSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP, SEXP save_phi_traceSEXP, SEXP save_cluster_cor_traceSEXP, SEXP z_det_gamma0SEXP, SEXP z_modeSEXP, SEXP z_det_gamma_linearSEXP) {
+Rcpp::List CorTree_sampler(arma::mat X, int n_clus, int tree_depth, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval, bool save_phi_trace, bool save_cluster_cor_trace, double z_det_gamma0, int z_mode, bool z_det_gamma_linear, double ghs_diag_rate, double ghs_diag_upper, double ghs_jmlr_lambda, double ghs_det_df, bool ghs_scale_hierarchy, double ghs_scale_shape, double ghs_scale_rate_shape, double ghs_scale_rate_rate);
+RcppExport SEXP _CorTree_CorTree_sampler(SEXP XSEXP, SEXP n_clusSEXP, SEXP tree_depthSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP, SEXP save_phi_traceSEXP, SEXP save_cluster_cor_traceSEXP, SEXP z_det_gamma0SEXP, SEXP z_modeSEXP, SEXP z_det_gamma_linearSEXP, SEXP ghs_diag_rateSEXP, SEXP ghs_diag_upperSEXP, SEXP ghs_jmlr_lambdaSEXP, SEXP ghs_det_dfSEXP, SEXP ghs_scale_hierarchySEXP, SEXP ghs_scale_shapeSEXP, SEXP ghs_scale_rate_shapeSEXP, SEXP ghs_scale_rate_rateSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -34,7 +35,15 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type z_det_gamma0(z_det_gamma0SEXP);
     Rcpp::traits::input_parameter< int >::type z_mode(z_modeSEXP);
     Rcpp::traits::input_parameter< bool >::type z_det_gamma_linear(z_det_gamma_linearSEXP);
-    rcpp_result_gen = Rcpp::wrap(CorTree_sampler(X, n_clus, tree_depth, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_cluster_cor_trace, z_det_gamma0, z_mode, z_det_gamma_linear));
+    Rcpp::traits::input_parameter< double >::type ghs_diag_rate(ghs_diag_rateSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_diag_upper(ghs_diag_upperSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_jmlr_lambda(ghs_jmlr_lambdaSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_det_df(ghs_det_dfSEXP);
+    Rcpp::traits::input_parameter< bool >::type ghs_scale_hierarchy(ghs_scale_hierarchySEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_scale_shape(ghs_scale_shapeSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_scale_rate_shape(ghs_scale_rate_shapeSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_scale_rate_rate(ghs_scale_rate_rateSEXP);
+    rcpp_result_gen = Rcpp::wrap(CorTree_sampler(X, n_clus, tree_depth, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_cluster_cor_trace, z_det_gamma0, z_mode, z_det_gamma_linear, ghs_diag_rate, ghs_diag_upper, ghs_jmlr_lambda, ghs_det_df, ghs_scale_hierarchy, ghs_scale_shape, ghs_scale_rate_shape, ghs_scale_rate_rate));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -109,8 +118,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // PhyloTree_sampler
-Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree, int n_clus, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval, bool save_phi_trace, bool save_sigma_inv_trace, bool save_cluster_cor_trace);
-RcppExport SEXP _CorTree_PhyloTree_sampler(SEXP count_dataSEXP, SEXP treeSEXP, SEXP n_clusSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP, SEXP save_phi_traceSEXP, SEXP save_sigma_inv_traceSEXP, SEXP save_cluster_cor_traceSEXP) {
+Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree, int n_clus, int cutoff_layer, int total_iter, int burnin, int warm_start, arma::uvec init_Z, double c_sigma2_vec, double sigma_mu2, bool all_ind, int cov_interval, bool save_phi_trace, bool save_sigma_inv_trace, bool save_cluster_cor_trace, double ghs_diag_rate, double ghs_diag_upper, double ghs_jmlr_lambda, double ghs_det_df, bool ghs_scale_hierarchy, double ghs_scale_shape, double ghs_scale_rate_shape, double ghs_scale_rate_rate);
+RcppExport SEXP _CorTree_PhyloTree_sampler(SEXP count_dataSEXP, SEXP treeSEXP, SEXP n_clusSEXP, SEXP cutoff_layerSEXP, SEXP total_iterSEXP, SEXP burninSEXP, SEXP warm_startSEXP, SEXP init_ZSEXP, SEXP c_sigma2_vecSEXP, SEXP sigma_mu2SEXP, SEXP all_indSEXP, SEXP cov_intervalSEXP, SEXP save_phi_traceSEXP, SEXP save_sigma_inv_traceSEXP, SEXP save_cluster_cor_traceSEXP, SEXP ghs_diag_rateSEXP, SEXP ghs_diag_upperSEXP, SEXP ghs_jmlr_lambdaSEXP, SEXP ghs_det_dfSEXP, SEXP ghs_scale_hierarchySEXP, SEXP ghs_scale_shapeSEXP, SEXP ghs_scale_rate_shapeSEXP, SEXP ghs_scale_rate_rateSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -129,7 +138,15 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type save_phi_trace(save_phi_traceSEXP);
     Rcpp::traits::input_parameter< bool >::type save_sigma_inv_trace(save_sigma_inv_traceSEXP);
     Rcpp::traits::input_parameter< bool >::type save_cluster_cor_trace(save_cluster_cor_traceSEXP);
-    rcpp_result_gen = Rcpp::wrap(PhyloTree_sampler(count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_sigma_inv_trace, save_cluster_cor_trace));
+    Rcpp::traits::input_parameter< double >::type ghs_diag_rate(ghs_diag_rateSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_diag_upper(ghs_diag_upperSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_jmlr_lambda(ghs_jmlr_lambdaSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_det_df(ghs_det_dfSEXP);
+    Rcpp::traits::input_parameter< bool >::type ghs_scale_hierarchy(ghs_scale_hierarchySEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_scale_shape(ghs_scale_shapeSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_scale_rate_shape(ghs_scale_rate_shapeSEXP);
+    Rcpp::traits::input_parameter< double >::type ghs_scale_rate_rate(ghs_scale_rate_rateSEXP);
+    rcpp_result_gen = Rcpp::wrap(PhyloTree_sampler(count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start, init_Z, c_sigma2_vec, sigma_mu2, all_ind, cov_interval, save_phi_trace, save_sigma_inv_trace, save_cluster_cor_trace, ghs_diag_rate, ghs_diag_upper, ghs_jmlr_lambda, ghs_det_df, ghs_scale_hierarchy, ghs_scale_shape, ghs_scale_rate_shape, ghs_scale_rate_rate));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -147,13 +164,13 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_CorTree_CorTree_sampler", (DL_FUNC) &_CorTree_CorTree_sampler, 17},
+    {"_CorTree_CorTree_sampler", (DL_FUNC) &_CorTree_CorTree_sampler, 25},
     {"_CorTree_CorTree_heldout_logpred", (DL_FUNC) &_CorTree_CorTree_heldout_logpred, 7},
     {"_CorTree_CorTree_heldout_membership", (DL_FUNC) &_CorTree_CorTree_heldout_membership, 7},
     {"_CorTree_aggregate_tree_counts", (DL_FUNC) &_CorTree_aggregate_tree_counts, 2},
     {"_CorTree_isIn", (DL_FUNC) &_CorTree_isIn, 2},
     {"_CorTree_complementarySet", (DL_FUNC) &_CorTree_complementarySet, 2},
-    {"_CorTree_PhyloTree_sampler", (DL_FUNC) &_CorTree_PhyloTree_sampler, 15},
+    {"_CorTree_PhyloTree_sampler", (DL_FUNC) &_CorTree_PhyloTree_sampler, 23},
     {"_CorTree_rcpp_pgdraw", (DL_FUNC) &_CorTree_rcpp_pgdraw, 2},
     {NULL, NULL, 0}
 };

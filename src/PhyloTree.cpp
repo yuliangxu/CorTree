@@ -296,12 +296,15 @@ private:
     arma::vec loglik;
     arma::ucube cluster_cor;
     arma::mat tausq_GHS;
+    arma::mat scale_t;
+    arma::vec scale_b;
   } paras_sample;
   
 public:
   
   arma::uvec covariance_regularizations;
   arma::uvec covariance_updates_skipped;
+  arma::uvec empty_precision_updates;
   int iter=0;
   std::vector<GHS_params> ghs_list;
   Rcpp::List test_output;
@@ -311,6 +314,19 @@ public:
   bool save_cluster_cor_trace = false;
   int warm_start = 0;
   int cov_interval = 1;
+  double ghs_diag_rate = 0.0;
+  double ghs_diag_upper = arma::datum::inf;
+  double ghs_jmlr_lambda = 0.0;
+  double ghs_det_df = 0.0;
+  bool ghs_scale_hierarchy = false;
+  double ghs_scale_shape = 3.0;
+  double ghs_scale_rate_shape = 2.0;
+  double ghs_scale_rate_rate = 1.0;
+  arma::vec precision_scales;
+  double precision_scale_rate = 2.0;
+  arma::uword uniform_block_updates = 0;
+  arma::uword uniform_ess_evaluations = 0;
+  arma::uword uniform_max_ess_evaluations = 0;
 
   
   
@@ -320,6 +336,7 @@ public:
     dat.n_clus = n_clus;
     covariance_regularizations.zeros(n_clus);
     covariance_updates_skipped.zeros(n_clus);
+    empty_precision_updates.zeros(n_clus);
     dat.n = X.n_rows;
   };
 
@@ -351,6 +368,10 @@ public:
       paras_sample.cluster_cor = arma::zeros<arma::ucube>(dat.n, dat.n, gibbs_control.mcmc_sample);
     }
     paras_sample.tausq_GHS = arma::zeros<arma::mat>(dat.n_clus, gibbs_control.mcmc_sample);
+    if (!all_ind && ghs_scale_hierarchy) {
+      paras_sample.scale_t.zeros(dat.n_clus, gibbs_control.mcmc_sample);
+      paras_sample.scale_b.zeros(gibbs_control.mcmc_sample);
+    }
   };
   
   
@@ -445,6 +466,10 @@ public:
   // };
 
   void initialize_parameters(arma::uvec init_Z){
+    if (!all_ind && ghs_scale_hierarchy) {
+      precision_scales.ones(dat.n_clus);
+      precision_scale_rate = ghs_scale_shape > 1.0 ? ghs_scale_shape - 1.0 : ghs_scale_shape;
+    }
     paras.mu = arma::zeros<arma::mat>(tree.total_parents, dat.n_clus);
     paras.Z_cor_status = arma::ones<arma::uvec>(dat.n_clus);
     // Assuming tree.L is the dimension of the identity matrix and tree.total_slices is the number of slices
@@ -473,9 +498,23 @@ public:
 
     for (int i = 0; i < dat.n_clus; i++) {
       ghs_list.push_back(GHS_params(tree.L));
+      if (!all_ind && ghs_jmlr_lambda > 0.0) {
+        // The JMLR common scale fixes tau=1/lambda; it is not sampled.
+        ghs_list.back().tau_sq = cortree::jmlr_ghs_tau_sq(ghs_jmlr_lambda);
+      }
+      if (!all_ind && std::isfinite(ghs_diag_upper)) {
+        double initial_precision = std::min(1.0, ghs_diag_upper / 2.0);
+        if (initial_precision <= 0.0 || !std::isfinite(1.0 / initial_precision))
+          Rcpp::stop("ghs_diag_upper is too small for finite precision/covariance initialization.");
+        ghs_list.back().Omega *= initial_precision;
+        ghs_list.back().Sigma /= initial_precision;
+        paras.Sigma_inv.slice(i) = ghs_list.back().Omega;
+      }
     }
     
     paras.tau_sq_GHS = arma::zeros<arma::vec>(dat.n_clus);
+    if (!all_ind && ghs_jmlr_lambda > 0.0)
+      paras.tau_sq_GHS.fill(cortree::jmlr_ghs_tau_sq(ghs_jmlr_lambda));
 
   };
   
@@ -561,7 +600,7 @@ public:
           arma::vec random_vec = arma::solve(arma::trimatu(L.t()), z, arma::solve_opts::fast);
           paras.mu(tree.idx_cor, arma::uvec{k}) = post_mu + random_vec;
         }
-        
+
         
         // independent
         arma::vec post_sigma2 = 1/(idx_k.n_elem/paras.sigma2_vec.col(k) + 1/hyper.sigma_mu2);
@@ -577,11 +616,28 @@ public:
   void GHS_oneSample(const arma::mat& S, int n,
                    GHS_params& params) {
     int p = S.n_rows;
-    if (n < 1 || p < 1 || !S.is_finite() || arma::any(S.diag() <= 0.0))
-      Rcpp::stop("GHS update requires a nonempty cluster with positive residual sums of squares.");
+    if (ghs_jmlr_lambda > 0.0)
+      params.tau_sq = cortree::jmlr_ghs_tau_sq(ghs_jmlr_lambda);
+    if (n < 0 || p < 1 || S.n_cols != S.n_rows || !S.is_finite() ||
+        arma::any(S.diag() < 0.0))
+      Rcpp::stop("GHS update requires a finite scatter matrix with nonnegative diagonal.");
+    bool bounded = std::isfinite(ghs_diag_upper);
+    if (bounded && (arma::any(params.Omega.diag() <= 0.0) ||
+                    arma::any(params.Omega.diag() >= ghs_diag_upper)))
+      Rcpp::stop("Bounded GHS precision diagonal is outside (0, ghs_diag_upper).");
+    arma::vec effective_diagonal = S.diag() + 2.0 * ghs_diag_rate;
+    if (!effective_diagonal.is_finite() || (!bounded &&
+        (arma::any(effective_diagonal <= 0.0) || (ghs_diag_rate == 0.0 && n < 1))))
+      Rcpp::stop("GHS update requires positive diagonal rates; an empty cluster requires ghs_diag_rate > 0.");
     if (p == 1) {
-      params.Omega(0,0) = R::rgamma(n / 2.0 + 1.0, 2.0 / S(0,0));
+      params.Omega(0,0) = bounded ?
+        cortree::bounded_gamma_draw((n + ghs_det_df) / 2.0 + 1.0, S(0,0) / 2.0, ghs_diag_upper) :
+        R::rgamma((n + ghs_det_df) / 2.0 + 1.0, 2.0 / effective_diagonal(0));
+      if (!std::isfinite(params.Omega(0,0)) || params.Omega(0,0) <= 0.0)
+        Rcpp::stop("GHS precision draw must be finite and positive.");
       params.Sigma(0,0) = 1.0 / params.Omega(0,0);
+      if (ghs_diag_rate > 0.0 || bounded)
+        cortree::validate_ghs_precision_pair(params.Omega, params.Sigma);
       return;
     }
 
@@ -594,25 +650,48 @@ public:
       double sigma_22 = params.Sigma(i,i);  // Sigma_22 as submatrix
       
       arma::vec s_21 = S(ind, arma::uvec{i});            // s_21
-      double s_22 = S(i,i);  // s_22 as submatrix
+      // exp(-rho * tr(Omega)) shifts both the Schur gamma rate and beta precision.
+      double s_22 = effective_diagonal(i);
       
       arma::vec lambda_sq_12 = params.Lambda_sq(ind, arma::uvec{i});    // Lambda_sq_12
       arma::vec nu_12 = params.Nu(ind, arma::uvec{i});                  // Nu_12
       
-      // Sample gamma and beta using arma::randg
-      double gamma = arma::randg<double>(arma::distr_param(n / 2.0 + 1, 2.0 / s_22));  // Convert s_22 to scalar
-      arma::mat inv_Omega_11 = Sigma_11 - sigma_12 * sigma_12.t() / sigma_22;  // Convert sigma_22 to scalar
-      
-      arma::mat inv_C = s_22 * inv_Omega_11 + arma::diagmat(1.0 / (lambda_sq_12 * params.tau_sq));
-      arma::mat inv_C_chol = arma::chol(inv_C);
-      // Reuse the Cholesky factor for the mean as well as the noise.
-      // A generic solve can silently substitute a pseudoinverse for an
-      // ill-conditioned SPD matrix, changing this Gaussian conditional.
-      arma::vec rhs = arma::solve(arma::trimatl(inv_C_chol.t()), s_21, arma::solve_opts::fast);
-      arma::vec mu_i = -arma::solve(arma::trimatu(inv_C_chol), rhs, arma::solve_opts::fast);
-      arma::vec beta = mu_i + arma::solve(arma::trimatu(inv_C_chol), arma::randn(p - 1), arma::solve_opts::fast);
+      double gamma;
+      arma::mat inv_Omega_11;
+      arma::vec beta;
+      if (bounded) {
+        arma::mat Omega_11 = params.Omega(ind, ind);
+        if (!arma::inv_sympd(inv_Omega_11, Omega_11))
+          Rcpp::stop("Bounded GHS precision subblock inversion failed.");
+        arma::vec current_beta = params.Omega(ind, arma::uvec{i});
+        cortree::BoundedGHSBlock draw = cortree::bounded_ghs_block(
+          current_beta, inv_Omega_11, 1.0 / (lambda_sq_12 * params.tau_sq),
+          s_21, S(i,i), (n + ghs_det_df) / 2.0 + 1.0, ghs_diag_upper);
+        beta = draw.beta;
+        gamma = draw.gamma;
+        ++uniform_block_updates;
+        uniform_ess_evaluations += draw.evaluations;
+        uniform_max_ess_evaluations = std::max(uniform_max_ess_evaluations, draw.evaluations);
+      } else {
+        // Sample gamma and beta using arma::randg
+        gamma = arma::randg<double>(arma::distr_param((n + ghs_det_df) / 2.0 + 1, 2.0 / s_22));
+        if (!std::isfinite(gamma) || gamma <= 0.0)
+          Rcpp::stop("GHS Schur-complement precision draw must be finite and positive.");
+        inv_Omega_11 = Sigma_11 - sigma_12 * sigma_12.t() / sigma_22;  // Convert sigma_22 to scalar
+
+        arma::mat inv_C = s_22 * inv_Omega_11 + arma::diagmat(1.0 / (lambda_sq_12 * params.tau_sq));
+        arma::mat inv_C_chol = arma::chol(inv_C);
+        // Reuse the Cholesky factor for the mean as well as the noise.
+        // A generic solve can silently substitute a pseudoinverse for an
+        // ill-conditioned SPD matrix, changing this Gaussian conditional.
+        arma::vec rhs = arma::solve(arma::trimatl(inv_C_chol.t()), s_21, arma::solve_opts::fast);
+        arma::vec mu_i = -arma::solve(arma::trimatu(inv_C_chol), rhs, arma::solve_opts::fast);
+        beta = mu_i + arma::solve(arma::trimatu(inv_C_chol), arma::randn(p - 1), arma::solve_opts::fast);
+      }
       arma::vec omega_12 = beta;
       double omega_22 = gamma + arma::as_scalar(beta.t() * inv_Omega_11 * beta);
+      if (bounded && (!std::isfinite(omega_22) || omega_22 >= ghs_diag_upper))
+        Rcpp::stop("Bounded GHS diagonal draw is outside its support; no clipping was applied.");
       
       // Update Lambda_sq and Nu using arma::randg
       arma::vec rate = arma::square(omega_12) / (2.0 * params.tau_sq) + 1.0 / nu_12;
@@ -644,40 +723,60 @@ public:
       params.Nu(arma::uvec{i},ind) = nu_12.t(); 
       params.Nu(ind,arma::uvec{i}) = nu_12;
       
-      // Update tau_sq and xi
-      arma::vec omega_vector = params.Omega(arma::trimatl_ind(size(params.Omega), -1));
-      arma::vec lambda_sq_vector = params.Lambda_sq(arma::trimatl_ind(size(params.Lambda_sq), -1));
-      double rate_tau_sq = 1.0 / params.xi + arma::sum(arma::square(omega_vector) / (2.0 * lambda_sq_vector));
-      params.tau_sq = 1.0 / arma::randg<double>(arma::distr_param((p * (p - 1) / 2 + 1) / 2.0, 1.0 / rate_tau_sq));
-      params.xi = 1.0 / arma::randg<double>(arma::distr_param(1.0, 1.0 / (1.0 + 1.0 / params.tau_sq)));
+      // The JMLR prior has a fixed common scale, so no tau or xi draw.
+      if (ghs_jmlr_lambda == 0.0) {
+        arma::vec omega_vector = params.Omega(arma::trimatl_ind(size(params.Omega), -1));
+        arma::vec lambda_sq_vector = params.Lambda_sq(arma::trimatl_ind(size(params.Lambda_sq), -1));
+        double rate_tau_sq = 1.0 / params.xi + arma::sum(arma::square(omega_vector) / (2.0 * lambda_sq_vector));
+        params.tau_sq = 1.0 / arma::randg<double>(arma::distr_param((p * (p - 1) / 2 + 1) / 2.0, 1.0 / rate_tau_sq));
+        params.xi = 1.0 / arma::randg<double>(arma::distr_param(1.0, 1.0 / (1.0 + 1.0 / params.tau_sq)));
+      }
     }
 
     
+    if (ghs_diag_rate > 0.0 || bounded)
+      cortree::validate_ghs_precision_pair(params.Omega, params.Sigma);
 }
 
   
   void update_Sigma(){
     for (arma::uword k = 0; k < static_cast<arma::uword>(dat.n_clus); ++k) {
       arma::uvec idx_k = arma::find(paras.Z == k);
-      if (!all_ind && idx_k.n_elem > 0) {
+      if (!all_ind && (idx_k.n_elem > 0 || ghs_diag_rate > 0.0 || std::isfinite(ghs_diag_upper))) {
         arma::mat residual = paras.phi(idx_k, tree.idx_cor);
         residual.each_row() -= paras.mu(tree.idx_cor, arma::uvec{k}).t();
-        if (iter < warm_start) {
+        // The diagonal warm start is burn-in initialization, not a GHS update.
+        if (iter < warm_start && idx_k.n_elem > 0) {
           arma::vec variance = cortree::independent_variance(
             residual, tree.cor_layer_idx, hyper.c_sigma2_vec);
           paras.Sigma_inv.slice(k) = arma::diagmat(1.0 / variance);
           // Keep the block sampler's inverse pair consistent across warm-up.
           ghs_list[k].Omega = paras.Sigma_inv.slice(k);
           ghs_list[k].Sigma = arma::diagmat(variance);
-        } else if (cortree::update_precision_allowed(paras.Sigma_inv.slice(k))) {
+        } else if (ghs_diag_rate > 0.0 || std::isfinite(ghs_diag_upper) ||
+                   cortree::update_precision_allowed(paras.Sigma_inv.slice(k))) {
           arma::mat scatter = residual.t() * residual;
-          GHS_oneSample(scatter, static_cast<int>(idx_k.n_elem), ghs_list[k]);
-          paras.Sigma_inv.slice(k) = ghs_list[k].Omega;
+          if (ghs_scale_hierarchy) {
+            // The GHS state remains Q and Q^{-1}; likelihoods use Omega = t Q.
+            GHS_oneSample(precision_scales(k) * scatter,
+                          static_cast<int>(idx_k.n_elem), ghs_list[k]);
+            precision_scales(k) = cortree::ghs_component_scale(
+              scatter, ghs_list[k].Omega, static_cast<int>(idx_k.n_elem),
+              ghs_scale_shape, precision_scale_rate);
+            paras.Sigma_inv.slice(k) = precision_scales(k) * ghs_list[k].Omega;
+            arma::mat effective_covariance = ghs_list[k].Sigma / precision_scales(k);
+            cortree::validate_ghs_precision_pair(paras.Sigma_inv.slice(k), effective_covariance);
+          } else {
+            GHS_oneSample(scatter, static_cast<int>(idx_k.n_elem), ghs_list[k]);
+            paras.Sigma_inv.slice(k) = ghs_list[k].Omega;
+          }
           paras.tau_sq_GHS(k) = ghs_list[k].tau_sq;
+          if (idx_k.n_elem == 0) ++empty_precision_updates(k);
           // Restore the original covariance ridge once det(precision) > 1e150.
           arma::mat precision = paras.Sigma_inv.slice(k);
           arma::mat covariance;
-          if (cortree::regularize_precision(precision, covariance, hyper.err_precision)) {
+          if (ghs_diag_rate == 0.0 && !std::isfinite(ghs_diag_upper) &&
+              cortree::regularize_precision(precision, covariance, hyper.err_precision)) {
             paras.Sigma_inv.slice(k) = precision;
             // The next GHS sweep must start from this same inverse pair.
             ghs_list[k].Omega = precision;
@@ -689,8 +788,8 @@ public:
           ++covariance_updates_skipped(k);
         }
       }
-      // The paper's GHS diagonal prior is improper for an empty component.
-      // Retain its correlated precision; see docs/sampler-corrections.md for this limitation.
+      // Legacy flat diagonals retain empty-component precision; either proper
+      // diagonal prior refreshes it from the GHS transitions above.
       // Proper independent variance priors can still be refreshed when n_k = 0.
       if (tree.idx_ind.n_elem > 0) {
         arma::mat residual = paras.phi(idx_k, tree.idx_ind);
@@ -699,6 +798,9 @@ public:
           residual, tree.ind_layer_idx, hyper.c_sigma2_vec);
       }
     }
+    if (!all_ind && ghs_scale_hierarchy)
+      precision_scale_rate = cortree::ghs_common_scale_rate(
+        precision_scales, ghs_scale_shape, ghs_scale_rate_shape, ghs_scale_rate_rate);
   };
 
   void update_Z(){ 
@@ -866,6 +968,10 @@ public:
         paras_sample.cluster_cor.slice(idx) = paras.cluster_cor;
       }
       paras_sample.tausq_GHS.col(idx) = paras.tau_sq_GHS;
+      if (!all_ind && ghs_scale_hierarchy) {
+        paras_sample.scale_t.col(idx) = precision_scales;
+        paras_sample.scale_b(idx) = precision_scale_rate;
+      }
     }
     paras_sample.loglik(iter) = paras.loglike;
   };
@@ -874,7 +980,7 @@ public:
     SEXP phi_output = save_phi_trace ? Rcpp::wrap(paras_sample.phi_sample) : R_NilValue;
     SEXP sigma_inv_output = save_sigma_inv_trace ? Rcpp::wrap(paras_sample.Sigma_inv_sample) : R_NilValue;
     SEXP cluster_cor_output = save_cluster_cor_trace ? Rcpp::wrap(paras_sample.cluster_cor) : R_NilValue;
-    return Rcpp::List::create(Rcpp::Named("mu") = paras_sample.mu_sample,
+    Rcpp::List output = Rcpp::List::create(Rcpp::Named("mu") = paras_sample.mu_sample,
                               Rcpp::Named("phi") = phi_output,
                               Rcpp::Named("Sigma_inv") = sigma_inv_output,
                               Rcpp::Named("cluster_cor") = cluster_cor_output,
@@ -883,18 +989,73 @@ public:
                               Rcpp::Named("pi") = paras_sample.pi_sample,
                               Rcpp::Named("Z") = paras_sample.Z_sample,
                               Rcpp::Named("loglik") = paras_sample.loglik,
+                              Rcpp::Named("ghs_prior") = Rcpp::List::create(
+                                Rcpp::Named("family") = ghs_scale_hierarchy ? "hierarchical_determinant_trace" :
+                                  ghs_det_df > 0.0 ? (std::isfinite(ghs_diag_upper) ? "bounded_determinant" : "determinant_trace") :
+                                  ghs_jmlr_lambda > 0.0 ? "jmlr_fixed_scale" : "random_global_scale",
+                                Rcpp::Named("det_df") = ghs_det_df,
+                                Rcpp::Named("determinant_power") = ghs_det_df / 2.0,
+                                Rcpp::Named("jmlr_lambda") = ghs_jmlr_lambda,
+                                Rcpp::Named("global_tau_fixed") = ghs_jmlr_lambda > 0.0,
+                                Rcpp::Named("global_scale_prior") = ghs_jmlr_lambda > 0.0 ? "fixed" : "unit_half_cauchy",
+                                Rcpp::Named("global_scale") = ghs_jmlr_lambda > 0.0 ? 1.0 / ghs_jmlr_lambda : NA_REAL,
+                                Rcpp::Named("local_scale_prior") = "unit_half_cauchy",
+                                Rcpp::Named("diagonal") = ghs_det_df > 0.0 ?
+                                  (std::isfinite(ghs_diag_upper) ? "bounded_determinant_tilt" : "exponential_determinant_tilt") :
+                                  std::isfinite(ghs_diag_upper) ? "uniform" :
+                                  (ghs_diag_rate > 0.0 ? "exponential" : "flat_legacy"),
+                                Rcpp::Named("diag_rate") = ghs_diag_rate,
+                                Rcpp::Named("diag_upper") = ghs_diag_upper,
+                                Rcpp::Named("proper") = ghs_diag_rate > 0.0 || std::isfinite(ghs_diag_upper),
+                                Rcpp::Named("active") = !all_ind,
+                                Rcpp::Named("normalization") = "joint_over_SPD_and_horseshoe_scales",
+                                Rcpp::Named("warm_start") = warm_start),
+                              Rcpp::Named("empty_precision_updates") = empty_precision_updates,
+                              Rcpp::Named("ghs_uniform") = Rcpp::List::create(
+                                Rcpp::Named("block_updates") = uniform_block_updates,
+                                Rcpp::Named("ess_evaluations") = uniform_ess_evaluations,
+                                Rcpp::Named("max_ess_evaluations") = uniform_max_ess_evaluations),
                               Rcpp::Named("covariance_safeguards") = Rcpp::List::create(
+                                Rcpp::Named("enabled") = !all_ind && ghs_diag_rate == 0.0 && !std::isfinite(ghs_diag_upper),
                                 Rcpp::Named("regularizations") = covariance_regularizations,
                                 Rcpp::Named("updates_skipped") = covariance_updates_skipped,
                                 Rcpp::Named("epsilon") = hyper.err_precision,
                                 Rcpp::Named("regularize_logdet_threshold") = std::log(1e150),
                                 Rcpp::Named("freeze_logdet_threshold") = std::log(1e200)));
+    if (ghs_scale_hierarchy) {
+      Rcpp::List prior = output["ghs_prior"];
+      prior["scale_hierarchy"] = true;
+      prior["precision_parameterization"] = "Omega=t*Q";
+      prior["diag_rate_applies_to"] = "Q";
+      prior["horseshoe_scales_apply_to"] = "Q";
+      prior["template_diag_rate"] = ghs_diag_rate;
+      prior["template_det_df"] = ghs_det_df;
+      output["ghs_prior"] = prior;
+      output["ghs_scale"] = Rcpp::List::create(
+        Rcpp::Named("active") = !all_ind,
+        Rcpp::Named("t") = !all_ind ? Rcpp::wrap(paras_sample.scale_t) : R_NilValue,
+        Rcpp::Named("b") = !all_ind ? Rcpp::wrap(paras_sample.scale_b) : R_NilValue,
+        Rcpp::Named("shape") = ghs_scale_shape,
+        Rcpp::Named("rate_shape") = ghs_scale_rate_shape,
+        Rcpp::Named("rate_rate") = ghs_scale_rate_rate,
+        Rcpp::Named("initial_t") = 1.0,
+        Rcpp::Named("initial_b") = ghs_scale_shape > 1.0 ? ghs_scale_shape - 1.0 : ghs_scale_shape,
+        Rcpp::Named("trace_scope") = "post_burnin",
+        Rcpp::Named("first_saved_iteration") = gibbs_control.burnin + 1,
+        Rcpp::Named("update_schedule") = "cov_interval",
+        Rcpp::Named("update_interval") = cov_interval,
+        Rcpp::Named("Gamma_parameterization") = "shape_rate",
+        Rcpp::Named("precision_trace") = "Sigma_inv=t*Q",
+        Rcpp::Named("global_scale_trace") = "tausq_GHS=template_Q_global_variance");
+    }
+    return output;
   };
   
   
 };
 
-// [[Rcpp::export]]
+// The explicit R signature preserves Inf and required init_Z when regenerating exports.
+// [[Rcpp::export(signature = {count_data, tree, n_clus, cutoff_layer, total_iter, burnin, warm_start = 0L, init_Z, c_sigma2_vec = 1.0, sigma_mu2 = 1.0, all_ind = FALSE, cov_interval = 1L, save_phi_trace = FALSE, save_sigma_inv_trace = FALSE, save_cluster_cor_trace = FALSE, ghs_diag_rate = 0.0, ghs_diag_upper = Inf, ghs_jmlr_lambda = 0.0, ghs_det_df = 0.0, ghs_scale_hierarchy = FALSE, ghs_scale_shape = 3.0, ghs_scale_rate_shape = 2.0, ghs_scale_rate_rate = 1.0})]]
 Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree,
                       int n_clus, int cutoff_layer, 
                       int total_iter, int burnin, int warm_start=0,
@@ -905,12 +1066,27 @@ Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree,
                       int cov_interval = 1,
                       bool save_phi_trace = false,
                       bool save_sigma_inv_trace = false,
-                      bool save_cluster_cor_trace = false){
+                      bool save_cluster_cor_trace = false,
+                      double ghs_diag_rate = 0.0,
+                      double ghs_diag_upper = R_PosInf,
+                      double ghs_jmlr_lambda = 0.0,
+                      double ghs_det_df = 0.0,
+                      bool ghs_scale_hierarchy = false,
+                      double ghs_scale_shape = 3.0,
+                      double ghs_scale_rate_shape = 2.0,
+                      double ghs_scale_rate_rate = 1.0){
   Rcout<<"begin PhyloTree_sampler"<<std::endl;
   arma::wall_clock timer;
   timer.tic();
   cortree::validate_sampler(count_data, n_clus, total_iter, burnin, warm_start,
                             cov_interval, c_sigma2_vec, sigma_mu2, init_Z);
+  cortree::validate_ghs_diag_rate(ghs_diag_rate);
+  cortree::validate_ghs_jmlr_lambda(ghs_jmlr_lambda, ghs_diag_rate, ghs_diag_upper);
+  cortree::validate_ghs_det_df(ghs_det_df, ghs_diag_upper, ghs_diag_rate, ghs_jmlr_lambda);
+  cortree::validate_ghs_scale_hierarchy(ghs_scale_hierarchy, ghs_scale_shape,
+    ghs_scale_rate_shape, ghs_scale_rate_rate, ghs_diag_rate, ghs_diag_upper,
+    ghs_jmlr_lambda, warm_start);
+  cortree::validate_ghs_diag_upper(ghs_diag_upper, ghs_diag_rate, warm_start, all_ind);
   if (cutoff_layer < 0) Rcpp::stop("cutoff_layer must be nonnegative.");
   PhyloTree model;
 
@@ -924,6 +1100,14 @@ Rcpp::List PhyloTree_sampler(arma::mat count_data, Rcpp::List tree,
   model.save_cluster_cor_trace = save_cluster_cor_trace;
   model.warm_start = warm_start;
   model.cov_interval = cov_interval;
+  model.ghs_jmlr_lambda = ghs_jmlr_lambda;
+  model.ghs_det_df = ghs_det_df;
+  model.ghs_scale_hierarchy = ghs_scale_hierarchy;
+  model.ghs_scale_shape = ghs_scale_shape;
+  model.ghs_scale_rate_shape = ghs_scale_rate_shape;
+  model.ghs_scale_rate_rate = ghs_scale_rate_rate;
+  model.ghs_diag_rate = ghs_jmlr_lambda > 0.0 ? ghs_jmlr_lambda / 2.0 : ghs_diag_rate;
+  model.ghs_diag_upper = ghs_diag_upper;
   model.load_data(count_data, n_clus);
   Rcpp::Rcout << "Data loaded" << std::endl;
   model.set_hyperparameter(c_sigma2_vec, sigma_mu2);
