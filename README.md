@@ -4,6 +4,8 @@ CorTree is an R package for Bayesian mixture modeling of count data with tree-st
 
 The main idea is to represent high-dimensional counts through binary tree splits. CorTree can model correlation among the upper tree nodes within mixture components, while an independent-tree variant is available by setting `all_ind = TRUE`. The package also includes a phylogenetic-tree sampler for count tables whose features are tips in an `ape::phylo` tree.
 
+See the [precision-prior comparison](docs/sampler-corrections.md) for prior definitions, simulation and DNase-seq results, comparisons with the published paper, and the remaining convergence limitations.
+
 ## What Is In This Repository
 
 ```text
@@ -408,7 +410,7 @@ Rscript RDA/AGP4_plots.R
 
 `AGP1_cortree.R` fits the phylogenetic CorTree model. `AGP3_compare.R` compares CorTree against DMM and independent-tree fits. `AGP4_plots.R` builds UMAP, cluster, covariate, and method-comparison plots.
 
-These scripts currently write results to `/cwork/yx306/CorTree`. Change `out_dir` near the top of each script if you are running elsewhere.
+Set `out_dir` near the top of each script to a local results directory outside this repository. Keep generated study figures and fit artifacts there.
 
 ## DNase / Motif Workflows
 
